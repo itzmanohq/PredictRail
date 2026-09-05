@@ -1,0 +1,95 @@
+{
+  "model_name": "HistGradientBoostingRegressor",
+  "dataset_name": "PredictRail Indian Railways Dataset",
+  "timestamp": "2026-09-05 23:24:58",
+  "train_size": 41435,
+  "validation_size": 8642,
+  "test_size": 9124,
+  "baseline_validation": {
+    "MAE": 49.75,
+    "RMSE": 86.14,
+    "R2": -0.0002,
+    "MedAE": 36.0,
+    "within_10_min_pct": 10.66,
+    "within_30_min_pct": 38.87
+  },
+  "baseline_test": {
+    "MAE": 46.87,
+    "RMSE": 78.31,
+    "R2": -0.001,
+    "MedAE": 36.0,
+    "within_10_min_pct": 10.58,
+    "within_30_min_pct": 39.38
+  },
+  "validation_metrics": {
+    "MAE": 39.72,
+    "RMSE": 69.77,
+    "R2": 0.3439,
+    "MedAE": 19.88,
+    "within_10_min_pct": 29.25,
+    "within_30_min_pct": 64.04
+  },
+  "test_metrics": {
+    "MAE": 39.9,
+    "RMSE": 74.77,
+    "R2": 0.0874,
+    "MedAE": 19.06,
+    "within_10_min_pct": 30.43,
+    "within_30_min_pct": 65.06
+  },
+  "all_candidate_models": {
+    "HistGradientBoostingRegressor": {
+      "validation": {
+        "MAE": 39.72,
+        "RMSE": 69.77,
+        "R2": 0.3439,
+        "MedAE": 19.88,
+        "within_10_min_pct": 29.25,
+        "within_30_min_pct": 64.04
+      },
+      "test": {
+        "MAE": 39.9,
+        "RMSE": 74.77,
+        "R2": 0.0874,
+        "MedAE": 19.06,
+        "within_10_min_pct": 30.43,
+        "within_30_min_pct": 65.06
+      },
+      "training_time_sec": 0.75
+    },
+    "RandomForestRegressor": {
+      "validation": {
+        "MAE": 39.96,
+        "RMSE": 70.09,
+        "R2": 0.3378,
+        "MedAE": 20.62,
+        "within_10_min_pct": 29.01,
+        "within_30_min_pct": 62.07
+      },
+      "test": {
+        "MAE": 38.63,
+        "RMSE": 72.67,
+        "R2": 0.1381,
+        "MedAE": 18.96,
+        "within_10_min_pct": 31.42,
+        "within_30_min_pct": 65.38
+      },
+      "training_time_sec": 2.96
+    }
+  },
+  "feature_importances": {
+    "corridor_train_density": 0.4247,
+    "total_route_distance_km": 0.2647,
+    "distance_km": 0.243,
+    "total_route_stops": 0.1439,
+    "train_type": 0.0799,
+    "route_stop_progress": 0.0269,
+    "station_network_density": 0.0258,
+    "scheduled_halt_duration_min": 0.0112,
+    "station_sequence": 0.0076,
+    "departure_hour": 0.0058,
+    "time_of_day": 0.0025,
+    "route_distance_progress": 0.0,
+    "departure_minute": 0.0
+  }
+}

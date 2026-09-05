@@ -1,0 +1,15 @@
+{
+  "corridor_train_density": 0.4247,
+  "total_route_distance_km": 0.2647,
+  "distance_km": 0.243,
+  "total_route_stops": 0.1439,
+  "train_type": 0.0799,
+  "route_stop_progress": 0.0269,
+  "station_network_density": 0.0258,
+  "scheduled_halt_duration_min": 0.0112,
+  "station_sequence": 0.0076,
+  "departure_hour": 0.0058,
+  "time_of_day": 0.0025,
+  "route_distance_progress": 0.0,
+  "departure_minute": 0.0
+}
