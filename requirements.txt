@@ -19,3 +19,4 @@ geopy>=2.4.0
 
 # Testing & Utilities
 pytest>=7.4.0
+httpx
