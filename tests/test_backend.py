@@ -221,3 +221,21 @@ def test_validation_errors():
     # Blank train number
     resp = client.post("/eta", json={"train_number": "   ", "current_station": "GHY", "current_delay_minutes": 10.0})
     assert resp.status_code == 422
+
+
+def test_cors_production_origin():
+    """Verify CORS headers allow requests from production Vercel frontend."""
+    headers = {
+        "Origin": "https://predict-rail.vercel.app",
+        "Access-Control-Request-Method": "GET"
+    }
+    # Preflight OPTIONS request
+    resp = client.options("/health", headers=headers)
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "https://predict-rail.vercel.app"
+
+    # Actual GET request
+    resp = client.get("/health", headers={"Origin": "https://predict-rail.vercel.app"})
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "https://predict-rail.vercel.app"
+

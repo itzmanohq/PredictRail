@@ -1,15 +1,26 @@
 /**
  * PredictRail API Client
- * Connects to the FastAPI backend at http://localhost:8000
+ * Production backend: https://predictrail-backend.onrender.com
+ * Local backend: http://localhost:8000
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Resolve API base URL prioritizing VITE_API_BASE_URL, then VITE_API_URL, then environment fallback
+const rawApiUrl =
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD
+    ? 'https://predictrail-backend.onrender.com'
+    : 'http://localhost:8000');
+
+// Strip any trailing slashes for clean URL concatenation
+const API_BASE_URL = (rawApiUrl || 'https://predictrail-backend.onrender.com').replace(/\/+$/, '');
 
 /**
  * Generic fetch wrapper with error handling
  */
 async function fetchJson(endpoint, options = {}) {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE_URL}${cleanEndpoint}`;
   try {
     const response = await fetch(url, {
       headers: {
