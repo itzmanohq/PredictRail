@@ -1,0 +1,69 @@
+{
+  "dataset_name": "PredictRail Indian Railways Cleaned Training Dataset",
+  "processed_file": "data/processed/predictrail_training_data.csv",
+  "total_records": 59201,
+  "unique_trains_count": 2733,
+  "unique_stations_count": 2972,
+  "target_variable": {
+    "primary_regression_target": "arrival_delay_min",
+    "secondary_binary_target": "is_delayed",
+    "secondary_multiclass_target": "delay_severity",
+    "description": "Historical actual arrival delay in minutes for Indian Railways train-station stops."
+  },
+  "safe_features": [
+    "train_type",
+    "station_sequence",
+    "distance_km",
+    "total_route_distance_km",
+    "total_route_stops",
+    "route_distance_progress",
+    "route_stop_progress",
+    "scheduled_halt_duration_min",
+    "departure_hour",
+    "departure_minute",
+    "time_of_day",
+    "station_network_density",
+    "corridor_train_density"
+  ],
+  "feature_categories": {
+    "train_attributes": [
+      "train_type"
+    ],
+    "route_and_progress": [
+      "station_sequence",
+      "distance_km",
+      "total_route_distance_km",
+      "total_route_stops",
+      "route_distance_progress",
+      "route_stop_progress"
+    ],
+    "operational_timing": [
+      "scheduled_halt_duration_min",
+      "departure_hour",
+      "departure_minute",
+      "time_of_day"
+    ],
+    "network_density": [
+      "station_network_density",
+      "corridor_train_density"
+    ]
+  },
+  "leakage_columns_excluded": [
+    "future_actual_arrival",
+    "future_actual_departure",
+    "downstream_delays",
+    "post_trip_cancellation_flags"
+  ],
+  "data_splits": {
+    "split_method": "Grouped Split by Indian Train Number (70% Train, 15% Val, 15% Test)",
+    "train_records": 41435,
+    "val_records": 8642,
+    "test_records": 9124
+  },
+  "missing_value_strategy": {
+    "arrival_delay_min": "0 missing values across all 59,202 matched records.",
+    "distance_km": "Imputed with 0.0 at origin station.",
+    "scheduled_halt_duration_min": "Imputed with standard 2.0 min buffer if terminus.",
+    "station_network_density": "Imputed with 1 if single-service wayside halt."
+  }
+}

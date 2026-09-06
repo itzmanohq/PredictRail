@@ -1,17 +1,18 @@
 import os
 import sys
 import math
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from graph.congestion import get_station_congestion, get_graph
-RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
-SCHED_PATH = os.path.join(RAW_DIR, "indian_railway_schedules.csv")
+RAW_DIR = BASE_DIR / "data" / "raw"
+SCHED_PATH = RAW_DIR / "indian_railway_schedules.csv"
 
 _SCHEDULE_DF = None
 

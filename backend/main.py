@@ -6,14 +6,15 @@ Dynamic ETA, Weather Risk, Prototype Crowd, and Smart Compartment Recommendation
 import os
 import sys
 import logging
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from backend.config import settings
 from backend.schemas import (
@@ -67,10 +68,10 @@ app.add_middleware(
 )
 
 
-# Global Exception Handler (Prevents stack trace leaks to API clients)
+# Global Exception Handler (Prevents stack trace leaks to API clients but logs full traceback for debugging)
 @app.exception_handler(Exception)
 async def generic_exception_handler(request, exc):
-    logger.error(f"Unhandled error on {request.url}: {exc}", exc_info=False)
+    logger.error(f"Unhandled error on {request.url}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"error": "Internal server error occurred.", "detail": str(exc)}

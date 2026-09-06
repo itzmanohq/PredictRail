@@ -1,0 +1,30 @@
+[
+  {
+    "dataset_name": "Indian Railways Master Timetable & Schedules",
+    "filename": "indian_railway_schedules.csv",
+    "source": "https://github.com/areenakhan07/Indian_Railways",
+    "license": "Open Data Commons / Public Repository",
+    "description": "Complete Indian Railways network schedules containing Train No, Train Name, SEQ, Station Code, Arrival/Departure times, Distance, Source, and Destination."
+  },
+  {
+    "dataset_name": "Indian Railways Historical Station-Wise Delays",
+    "filename": "indian_train_delays.csv",
+    "source": "https://github.com/DeekshithRajBasa/Train-time-delay-prediction-using-machine-learning",
+    "license": "MIT License / Open Source",
+    "description": "Historical delay observations in minutes for Indian Railways train-station pairs."
+  },
+  {
+    "dataset_name": "Indian Railways Express Train Master Catalog",
+    "filename": "Train_List.csv",
+    "source": "https://github.com/ankitaanand28/DA323_IndianRailwayTrainDelayDatasets",
+    "license": "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 (CC BY-NC-SA 4.0)",
+    "description": "42 Indian Railways Express & Superfast trains connecting major metro corridors."
+  },
+  {
+    "dataset_name": "DataMeet Indian Railways Stations GeoJSON",
+    "filename": "stations.json",
+    "source": "https://github.com/datameet/railways",
+    "license": "Open Data Commons Open Database License (ODbL) / CC-BY-SA",
+    "description": "GeoJSON database of ~8,990 Indian railway stations with geographic coordinates and railway zones."
+  }
+]

@@ -6,15 +6,16 @@ import os
 import sys
 import json
 import time
+from pathlib import Path
 import requests
 from typing import Dict, Any, Optional, Tuple
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-RAW_DIR = os.path.join(BASE_DIR, "data", "raw")
-STATIONS_GEOJSON_PATH = os.path.join(RAW_DIR, "stations.json")
+RAW_DIR = BASE_DIR / "data" / "raw"
+STATIONS_GEOJSON_PATH = RAW_DIR / "stations.json"
 OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
 
 # In-memory caches

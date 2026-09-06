@@ -1,12 +1,13 @@
 import os
 import json
+from pathlib import Path
 import joblib
 import networkx as nx
 from typing import Dict, Any, List, Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GRAPH_PATH = os.path.join(BASE_DIR, "graph", "railway_network_graph.joblib")
-BOTTLENECKS_PATH = os.path.join(BASE_DIR, "graph", "bottlenecks.json")
+BASE_DIR = Path(__file__).resolve().parent.parent
+GRAPH_PATH = BASE_DIR / "graph" / "railway_network_graph.joblib"
+BOTTLENECKS_PATH = BASE_DIR / "graph" / "bottlenecks.json"
 
 _CACHED_GRAPH = None
 _CACHED_BOTTLENECKS = None

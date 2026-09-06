@@ -7,15 +7,16 @@ It does NOT connect to live camera sensors, thermal imagers, or live IRCTC reser
 """
 import os
 import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional, Union
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-SYNTHETIC_CROWD_CSV = os.path.join(BASE_DIR, "data", "synthetic", "crowd_data.csv")
+SYNTHETIC_CROWD_CSV = BASE_DIR / "data" / "synthetic" / "crowd_data.csv"
 
 # Transparent, Configurable Central Crowd Level Thresholds
 # Occupancy Ratio = Estimated Passengers / Nominal Seating Capacity

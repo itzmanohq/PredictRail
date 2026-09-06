@@ -1,11 +1,12 @@
 import os
+from pathlib import Path
 import joblib
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Union, List
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(BASE_DIR, "models", "predictrail_delay_model.joblib")
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / "models" / "predictrail_delay_model.joblib"
 
 _LOADED_MODEL = None
 

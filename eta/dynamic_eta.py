@@ -4,13 +4,14 @@ Combines Timetable Schedules, ML Model Delay Inference, NetworkX Topology, and D
 """
 import os
 import sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, List, Optional, Union
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from eta.eta_calculator import parse_time_to_minutes, compute_dynamic_eta_timestamp
 from graph.delay_propagation import simulate_delay_propagation, get_schedules_df

@@ -13,17 +13,12 @@ ENV/
 .env
 *.env.local
 
-# Data files (avoid committing large raw datasets)
-data/raw/*
-!data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
+# Data files (track production datasets needed by the application)
+# data/raw/
+# data/processed/
 
-# Trained Model Artifacts
-models/*.pkl
-models/*.joblib
-models/*.onnx
-!models/.gitkeep
+# Trained Model Artifacts (track production models needed for deployment)
+# models/*.joblib
 
 # Node / Frontend
 frontend/node_modules/

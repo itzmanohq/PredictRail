@@ -239,3 +239,55 @@ def test_cors_production_origin():
     assert resp.status_code == 200
     assert resp.headers.get("access-control-allow-origin") == "https://predict-rail.vercel.app"
 
+
+def test_trains_search_12637():
+    """Verify GET /trains?search=12637&limit=8 returns Pandian Express."""
+    resp = client.get("/trains?search=12637&limit=8")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_trains"] >= 1
+    assert len(data["trains"]) <= 8
+    match = [t for t in data["trains"] if t["train_number"] == "12637"]
+    assert len(match) == 1
+    assert "PANDIAN" in match[0]["train_name"].upper()
+    assert match[0]["source_station"] == "MS"
+    assert match[0]["destination_station"] == "MDU"
+
+
+def test_train_detail_12637():
+    """Verify GET /trains/12637 returns complete route for Pandian Express."""
+    resp = client.get("/trains/12637")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["train_number"] == "12637"
+    assert "PANDIAN" in data["train_name"].upper()
+    assert data["source_station"] == "MS"
+    assert data["destination_station"] == "MDU"
+    assert len(data["stops"]) == 11
+    # Check first and last stop
+    assert data["stops"][0]["station_code"] == "MS"
+    assert data["stops"][-1]["station_code"] == "MDU"
+
+
+def test_predict_endpoint_12637():
+    """Verify POST /predict returns unified intelligence payload for train 12637."""
+    payload = {
+        "train_number": "12637",
+        "current_station": "MS",
+        "current_delay_minutes": 15.0,
+        "budget_filter": "ALL"
+    }
+    resp = client.post("/predict", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["train"]["train_number"] == "12637"
+    assert "PANDIAN" in data["train"]["train_name"].upper()
+    assert "delay_prediction" in data
+    assert "dynamic_eta" in data
+    assert "weather" in data
+    assert "crowd" in data
+    assert "compartment_recommendation" in data
+    assert "network_bottlenecks" in data
+    assert "delay_propagation" in data
+
+

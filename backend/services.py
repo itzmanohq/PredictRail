@@ -7,11 +7,12 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 # Import existing PredictRail modules
 from ml.predict import predict_delay, get_model

@@ -7,11 +7,12 @@ They are intended for algorithmic and passenger advisory UX demonstration, NOT a
 """
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from crowd.crowd_detector import estimate_station_crowd, calculate_occupancy_ratio, classify_crowd_level
 

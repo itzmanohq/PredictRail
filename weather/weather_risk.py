@@ -4,12 +4,13 @@ Transparent heuristics for Indian Railways operational delay risk.
 """
 import os
 import sys
+from pathlib import Path
 import pandas as pd
 from typing import Dict, Any, List, Optional
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from weather.open_meteo import fetch_station_weather
 from weather.weather_features import classify_weather

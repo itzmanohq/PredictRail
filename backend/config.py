@@ -2,12 +2,13 @@
 PredictRail Backend Configuration & Environment Settings
 """
 import os
+from pathlib import Path
 from typing import List
 
 from dotenv import load_dotenv
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 class Settings:
     PROJECT_NAME: str = "PredictRail"
