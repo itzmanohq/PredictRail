@@ -97,9 +97,47 @@ def get_dynamic_eta(
     total_distance_km = float(stops[-1]['Distance']) if stops[-1]['Distance'] > 0 else 1000.0
     total_stops = len(stops)
 
-    # 6. Generate Upcoming Stations ETA Table
+    # 6. Generate Upcoming Stations ETA Table (Optimized with Batch ML Prediction)
     upcoming_stations = []
+    future_stops = stops[cur_idx + 1:]
+    t_type = 'Superfast' if ('SF' in train_name or t_no.startswith('12') or t_no.startswith('22')) else 'Mail_Express'
     
+    # Pre-build ML batch feature inputs for all upcoming stops
+    ml_batch_inputs = []
+    for s in future_stops:
+        seq = s['SEQ']
+        dist_km = float(s['Distance'])
+        sched_dep = s['Departure Time']
+        stn_code = s['Station_Code']
+        prop_info = prop_trajectory.get(stn_code, {})
+        dep_mins = parse_time_to_minutes(sched_dep) if sched_dep else 720.0
+        dep_h = int(dep_mins // 60) % 24
+        
+        ml_batch_inputs.append({
+            'train_type': t_type,
+            'station_sequence': seq,
+            'distance_km': dist_km,
+            'total_route_distance_km': total_distance_km,
+            'total_route_stops': total_stops,
+            'route_distance_progress': round(dist_km / max(1.0, total_distance_km), 4),
+            'route_stop_progress': round(seq / max(1, total_stops), 4),
+            'scheduled_halt_duration_min': 2.0,
+            'departure_hour': dep_h,
+            'departure_minute': int(dep_mins % 60),
+            'time_of_day': 'Morning_Peak' if 6 <= dep_h <= 10 else ('Evening_Peak' if 17 <= dep_h <= 21 else 'Midday'),
+            'station_network_density': prop_info.get('train_count', 20),
+            'corridor_train_density': 10
+        })
+
+    ml_predictions = []
+    if ml_batch_inputs:
+        try:
+            batch_res = predict_delay(ml_batch_inputs)
+            if isinstance(batch_res, dict) and "predictions" in batch_res:
+                ml_predictions = [p.get("predicted_delay_min", 0.0) for p in batch_res["predictions"]]
+        except Exception:
+            ml_predictions = []
+
     for i in range(cur_idx, len(stops)):
         stop = stops[i]
         stn_code = stop['Station_Code']
@@ -119,26 +157,11 @@ def get_dynamic_eta(
             prop_info = prop_trajectory.get(stn_code, {})
             d_prop = prop_info.get('estimated_delay_min', current_delay)
 
-            # Query ML model prediction for station baseline expected delay
-            ml_input = {
-                'train_type': 'Superfast' if ('SF' in train_name or t_no.startswith('12') or t_no.startswith('22')) else 'Mail_Express',
-                'station_sequence': seq,
-                'distance_km': dist_km,
-                'total_route_distance_km': total_distance_km,
-                'total_route_stops': total_stops,
-                'route_distance_progress': round(dist_km / max(1.0, total_distance_km), 4),
-                'route_stop_progress': round(seq / max(1, total_stops), 4),
-                'scheduled_halt_duration_min': 2.0,
-                'departure_hour': int(parse_time_to_minutes(sched_dep) // 60) % 24 if sched_dep else 12,
-                'departure_minute': int(parse_time_to_minutes(sched_dep) % 60) if sched_dep else 0,
-                'time_of_day': 'Midday',
-                'station_network_density': prop_info.get('train_count', 20),
-                'corridor_train_density': 10
-            }
-            try:
-                ml_res = predict_delay(ml_input)
-                d_ml = ml_res.get('predicted_delay_min', d_prop)
-            except Exception:
+            # Retrieve fast batched ML prediction
+            future_idx = i - (cur_idx + 1)
+            if future_idx < len(ml_predictions):
+                d_ml = ml_predictions[future_idx]
+            else:
                 d_ml = d_prop
 
             # Smoothly blend propagation momentum with ML expected corridor delay

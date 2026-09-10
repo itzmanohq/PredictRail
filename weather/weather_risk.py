@@ -167,22 +167,56 @@ def get_route_weather(
         "station_weather_profiles": route_weather_list
     }
 
+from concurrent.futures import ThreadPoolExecutor
+
 def apply_weather_adjustment_to_eta(eta_response: Dict[str, Any]) -> Dict[str, Any]:
     """
     Consumes a Dynamic ETA response and enriches it with station-level weather risks
-    while keeping the base ML/graph prediction and weather adjustment separately visible.
+    using fast anchor-sampling along the corridor (sub-second execution).
     """
-    if not eta_response.get("success"):
+    if not eta_response.get("success") or not eta_response.get("upcoming_itinerary"):
         return eta_response
 
+    itinerary = eta_response["upcoming_itinerary"]
+    n_stops = len(itinerary)
+
+    # Select key anchor station indices along the corridor:
+    # Always include origin, destination, and up to 2 intermediate midpoint/quarter points
+    if n_stops <= 4:
+        anchor_indices = list(range(n_stops))
+    else:
+        step = max(1, n_stops // 3)
+        anchor_indices = sorted(list(set([0, step, min(2 * step, n_stops - 1), n_stops - 1])))
+
+    anchor_codes = [itinerary[idx]["station_code"] for idx in anchor_indices]
+
+    # Fast parallel fetch for anchor stations only (max 4 requests in parallel)
+    weather_map = {}
+    try:
+        with ThreadPoolExecutor(max_workers=min(4, len(anchor_codes))) as executor:
+            results = list(executor.map(lambda code: (code, fetch_station_weather(code, timeout=1.5)), anchor_codes))
+            for code, raw_w in results:
+                weather_map[code] = raw_w
+    except Exception:
+        weather_map = {}
+
+    # Map each stop in the itinerary to its nearest anchor station weather
     enriched_itinerary = []
     cumulative_weather_buffer = 0.0
 
-    for stn in eta_response["upcoming_itinerary"]:
+    for idx, stn in enumerate(itinerary):
         stn_code = stn["station_code"]
-        raw_w = fetch_station_weather(stn_code)
-        w_risk = calculate_weather_risk(raw_w)
+        
+        # Check if direct weather exists or find nearest anchor
+        if stn_code in weather_map:
+            raw_w = weather_map[stn_code]
+        else:
+            # Find nearest anchor index
+            nearest_anchor_idx = min(anchor_indices, key=lambda a_idx: abs(a_idx - idx))
+            nearest_code = itinerary[nearest_anchor_idx]["station_code"]
+            raw_w = weather_map.get(nearest_code) or {"weather_code": -1, "wind_speed_kmh": 0.0, "precipitation_mm": 0.0}
 
+        w_risk = calculate_weather_risk(raw_w)
         base_pred = stn["predicted_delay_min"]
         weather_adj = w_risk["weather_delay_adjustment_min"]
         
@@ -203,8 +237,9 @@ def apply_weather_adjustment_to_eta(eta_response: Dict[str, Any]) -> Dict[str, A
 
     enriched_response = eta_response.copy()
     enriched_response["upcoming_itinerary"] = enriched_itinerary
-    enriched_response["destination_weather_adjusted_delay_min"] = enriched_itinerary[-1]["final_weather_adjusted_delay_min"]
-    enriched_response["destination_weather_risk"] = enriched_itinerary[-1]["weather_risk_level"]
+    if enriched_itinerary:
+        enriched_response["destination_weather_adjusted_delay_min"] = enriched_itinerary[-1]["final_weather_adjusted_delay_min"]
+        enriched_response["destination_weather_risk"] = enriched_itinerary[-1]["weather_risk_level"]
     
     return enriched_response
 

@@ -15,36 +15,66 @@ const rawApiUrl =
 // Strip any trailing slashes for clean URL concatenation
 const API_BASE_URL = (rawApiUrl || 'https://predictrail-backend.onrender.com').replace(/\/+$/, '');
 
+// Client-side cache for static train routes & catalog to prevent redundant network queries
+const _CLIENT_CACHE = new Map();
+
 /**
- * Generic fetch wrapper with error handling
+ * Generic fetch wrapper with automated retry (for Render cold starts) and error formatting
  */
-async function fetchJson(endpoint, options = {}) {
+async function fetchJson(endpoint, options = {}, retries = 2) {
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${API_BASE_URL}${cleanEndpoint}`;
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {})
-      },
-      ...options
-    });
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      // AbortController with 25-second timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
 
-    if (!response.ok) {
-      let errorDetail = `Request failed with status ${response.status}`;
-      try {
-        const errorData = await response.json();
-        errorDetail = errorData.detail || errorData.error || errorDetail;
-      } catch (e) {
-        // use default status message
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(options.headers || {})
+        },
+        ...options
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        let errorDetail = `Request failed with status ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorData.error || errorDetail;
+        } catch (e) {
+          // use default status message
+        }
+        throw new Error(errorDetail);
       }
-      throw new Error(errorDetail);
-    }
 
-    return await response.json();
-  } catch (error) {
-    console.error(`API Error on [${options.method || 'GET'}] ${endpoint}:`, error);
-    throw error;
+      return await response.json();
+    } catch (error) {
+      const isLastAttempt = attempt === retries;
+      const isNetworkError = error.name === 'AbortError' || error.message.includes('Failed to fetch') || error.message.includes('NetworkError');
+
+      if (!isLastAttempt && isNetworkError) {
+        console.warn(`[PredictRail API] Attempt ${attempt + 1} failed for ${endpoint}. Retrying in 1.5s (server may be waking up)...`);
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        continue;
+      }
+
+      let friendlyMessage = error.message;
+      if (error.name === 'AbortError') {
+        friendlyMessage = 'Server request timed out. The backend may be spinning up from sleep mode. Please try again.';
+      } else if (error.message && error.message.includes('Failed to fetch')) {
+        friendlyMessage = 'Cannot connect to backend server. If using cloud deployment, Render is waking up from sleep (~30s). Please retry.';
+      }
+
+      console.error(`API Error on [${options.method || 'GET'}] ${endpoint}:`, friendlyMessage);
+      const enhancedError = new Error(friendlyMessage);
+      enhancedError.originalError = error;
+      throw enhancedError;
+    }
   }
 }
 
@@ -66,10 +96,18 @@ export async function getTrains(search = '', limit = 50) {
 }
 
 /**
- * Get detailed itinerary and stops for a specific train
+ * Get detailed itinerary and stops for a specific train (cached in client memory)
  */
 export async function getTrainDetail(trainNumber) {
-  return await fetchJson(`/trains/${encodeURIComponent(trainNumber)}`);
+  const cleanNo = String(trainNumber).trim().replace(/^0+/, '');
+  if (_CLIENT_CACHE.has(`train:${cleanNo}`)) {
+    return _CLIENT_CACHE.get(`train:${cleanNo}`);
+  }
+  const data = await fetchJson(`/trains/${encodeURIComponent(cleanNo)}`);
+  if (data && data.train_number) {
+    _CLIENT_CACHE.set(`train:${cleanNo}`, data);
+  }
+  return data;
 }
 
 /**

@@ -18,6 +18,9 @@ RAW_DIR = BASE_DIR / "data" / "raw"
 STATIONS_GEOJSON_PATH = RAW_DIR / "stations.json"
 OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast"
 
+# Persistent session with connection pooling for rapid HTTP keep-alive
+_SESSION = requests.Session()
+
 # In-memory caches
 _STATION_COORDS_MAP: Optional[Dict[str, Dict[str, Any]]] = None
 _WEATHER_CACHE: Dict[Tuple[float, float], Tuple[float, Dict[str, Any]]] = {}
@@ -92,7 +95,7 @@ def fetch_station_weather(
     station_code: str,
     lat: Optional[float] = None,
     lon: Optional[float] = None,
-    timeout: float = 5.0,
+    timeout: float = 2.0,
     bypass_cache: bool = False
 ) -> Dict[str, Any]:
     """
@@ -156,7 +159,7 @@ def fetch_station_weather(
     }
 
     try:
-        resp = requests.get(OPEN_METEO_BASE_URL, params=params, timeout=timeout)
+        resp = _SESSION.get(OPEN_METEO_BASE_URL, params=params, timeout=timeout)
         if resp.status_code == 200:
             data = resp.json()
             curr = data.get("current", {})

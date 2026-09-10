@@ -278,9 +278,26 @@ export default function App() {
               <line x1="12" y1="8" x2="12" y2="12"></line>
               <line x1="12" y1="16" x2="12.01" y2="16"></line>
             </svg>
-            <div>
+            <div style={{ flex: 1 }}>
               <strong>Notice:</strong> {error}
             </div>
+            <button
+              className="retry-btn"
+              onClick={handleManualRefresh}
+              style={{
+                background: 'rgba(239, 68, 68, 0.2)',
+                border: '1px solid rgba(239, 68, 68, 0.4)',
+                color: '#f87171',
+                padding: '4px 12px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '12px',
+                marginLeft: '12px'
+              }}
+            >
+              ↻ Retry Connection
+            </button>
           </div>
         )}
 

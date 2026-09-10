@@ -163,7 +163,7 @@ class RailRadarClient:
                 params["haltsOnly"] = "true"
 
             try:
-                with httpx.Client(timeout=12.0) as client:
+                with httpx.Client(timeout=2.5) as client:
                     resp = client.get(url, headers=self._get_headers(), params=params)
 
                 if resp.status_code == 200:

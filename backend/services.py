@@ -27,6 +27,7 @@ from backend.railradar_client import railradar_client
 
 _SCHEDULES_CACHE: Optional[pd.DataFrame] = None
 _TRAIN_SUMMARIES_CACHE: Optional[List[Dict[str, Any]]] = None
+_TRAIN_DETAIL_CACHE: Dict[str, Dict[str, Any]] = {}
 
 def get_cached_schedules() -> pd.DataFrame:
     """Loads and caches the cleaned Indian Railways timetable dataframe."""
@@ -80,8 +81,12 @@ def get_train_catalog(limit: int = 100, search: Optional[str] = None) -> Tuple[i
 def get_train_by_number(train_number: str) -> Optional[Dict[str, Any]]:
     """
     Retrieves complete route itinerary and station sequence for a specific train.
+    Cached in memory for instant O(1) retrieval.
     """
     t_no = str(train_number).strip().lstrip('0')
+    if t_no in _TRAIN_DETAIL_CACHE:
+        return _TRAIN_DETAIL_CACHE[t_no]
+        
     df = get_cached_schedules()
     route = df[df['Train_No'] == t_no]
     
@@ -108,7 +113,7 @@ def get_train_by_number(train_number: str) -> Optional[Dict[str, Any]]:
             "longitude": coords.get("longitude") if coords else None
         })
 
-    return {
+    res = {
         "train_number": t_no,
         "train_name": str(first['Train Name']).strip(),
         "source_station": str(first.get('Source Station', first['Station_Code'])).strip().upper(),
@@ -119,6 +124,8 @@ def get_train_by_number(train_number: str) -> Optional[Dict[str, Any]]:
         "route_distance_km": float(last['Distance']) if pd.notnull(last['Distance']) else 0.0,
         "stops": stops
     }
+    _TRAIN_DETAIL_CACHE[t_no] = res
+    return res
 
 def service_predict_delay(
     train_number: str,
