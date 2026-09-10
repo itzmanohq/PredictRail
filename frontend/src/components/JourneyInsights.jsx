@@ -13,22 +13,29 @@ export default function JourneyInsights({
   const crowdData = data.crowd || {};
   const recData = data.compartment_recommendation || {};
   const train = data.train || {};
+  const isArrived = Boolean(data.is_arrived || data.train_status === 'ARRIVED');
 
-  // 1. Predicted Delay
-  const predictedDelay = delayData.predicted_delay_minutes ?? 0;
-  const delayText = predictedDelay <= 10 ? 'On Time' : `+${Math.round(predictedDelay)} min`;
-  const delayDetail = predictedDelay <= 10 
-    ? 'Running on schedule along current corridor' 
-    : `Expected arrival delay at ${delayData.station_name || 'station'}`;
+  // 1. Predicted Delay / Historical Arrival Delay
+  const predictedDelay = data.current_delay_minutes ?? delayData.predicted_delay_minutes ?? 0;
+  const delayText = isArrived 
+    ? (predictedDelay <= 10 ? 'Arrived On Time' : `Arrived (+${Math.round(predictedDelay)}m)`)
+    : (predictedDelay <= 10 ? 'On Time' : `+${Math.round(predictedDelay)} min`);
+  const delayDetail = isArrived
+    ? 'Historical arrival record at terminus'
+    : (predictedDelay <= 10 
+      ? 'Running on schedule along current corridor' 
+      : `Expected arrival delay at ${delayData.station_name || 'station'}`);
 
   // 2. Estimated Arrival
-  const arrivalTime = etaData.destination_dynamic_eta || '11:29 AM';
-  const arrivalDetail = `Terminus: ${train.destination_name || etaData.destination || 'New Delhi'}`;
+  const arrivalTime = isArrived ? '0 min remaining' : (etaData.destination_dynamic_eta || '11:29 AM');
+  const arrivalDetail = isArrived
+    ? `Completed at ${train.destination_name || etaData.destination || 'Terminus'}`
+    : `Terminus: ${train.destination_name || etaData.destination || 'New Delhi'}`;
 
   // 3. Weather Risk
   const weatherTemp = weatherData.temperature_c != null ? `${Math.round(weatherData.temperature_c)}°C` : '28°C';
   const weatherAdj = weatherData.weather_delay_adjustment_min || 0;
-  const weatherRisk = weatherAdj > 10 ? 'High' : (weatherAdj > 3 ? 'Moderate' : 'Low');
+  const weatherRisk = isArrived ? 'Optimal' : (weatherAdj > 10 ? 'High' : (weatherAdj > 3 ? 'Moderate' : 'Low'));
   const weatherDetail = `${weatherTemp} · Clear track visibility`;
 
   // 4. Crowd Level
@@ -40,9 +47,11 @@ export default function JourneyInsights({
   const stops = train.stops || [];
   const totalStops = stops.length || 20;
   const upcomingCount = etaData.upcoming_stops_count ?? (totalStops - 2);
-  const passedStops = Math.max(1, totalStops - upcomingCount);
-  const progressPercent = Math.round((passedStops / Math.max(1, totalStops)) * 100);
-  const progressDetail = `Completed ${passedStops} of ${totalStops} corridor stations`;
+  const passedStops = isArrived ? totalStops : Math.max(1, totalStops - upcomingCount);
+  const progressPercent = isArrived ? 100 : Math.round((passedStops / Math.max(1, totalStops)) * 100);
+  const progressDetail = isArrived 
+    ? 'All 100% corridor stations completed' 
+    : `Completed ${passedStops} of ${totalStops} corridor stations`;
 
   // 6. Smart Recommendation
   const recClass = recData.recommended_coach_or_class || '2A';

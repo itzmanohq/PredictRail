@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getTrains, getTrainDetail } from '../services/api';
+import { getTrains, getTrainDetail, getLiveTrainStatus } from '../services/api';
 
 const POPULAR_EXAMPLES = [
   { number: '12423', name: 'Rajdhani Express', station: 'GHY', label: '12423 Rajdhani · GHY' },
@@ -12,20 +12,23 @@ export default function JourneyInputCard({
   onAnalyze,
   loading,
   currentTrainNumber,
-  currentStationCode
+  currentStationCode,
+  liveStatus
 }) {
   const [trainQuery, setTrainQuery] = useState(currentTrainNumber || '12423');
   const [trainSuggestions, setTrainSuggestions] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedTrainDetail, setSelectedTrainDetail] = useState(null);
   const [selectedStation, setSelectedStation] = useState(currentStationCode || 'GHY');
+  const [passedStationsList, setPassedStationsList] = useState([]);
+  const [isTrainArrived, setIsTrainArrived] = useState(false);
   const dropdownRef = useRef(null);
 
   // Sync state if external selection changes
   useEffect(() => {
     if (currentTrainNumber && currentTrainNumber !== trainQuery) {
       setTrainQuery(currentTrainNumber);
-      loadTrainStops(currentTrainNumber, false);
+      loadTrainStopsAndLive(currentTrainNumber, false);
     }
   }, [currentTrainNumber]);
 
@@ -35,9 +38,9 @@ export default function JourneyInputCard({
     }
   }, [currentStationCode]);
 
-  // Load initial train detail
+  // Load initial train detail and live position
   useEffect(() => {
-    loadTrainStops(trainQuery || '12423', false);
+    loadTrainStopsAndLive(trainQuery || '12423', false);
   }, []);
 
   // Close dropdown on outside click
@@ -75,19 +78,42 @@ export default function JourneyInputCard({
     };
   }, [trainQuery]);
 
-  async function loadTrainStops(tNo, autoAnalyze = false) {
+  async function loadTrainStopsAndLive(tNo, autoAnalyze = false) {
     try {
-      const detail = await getTrainDetail(tNo);
+      const [detail, liveRes] = await Promise.all([
+        getTrainDetail(tNo).catch(() => null),
+        getLiveTrainStatus(tNo).catch(() => null)
+      ]);
+
       if (detail && detail.stops && detail.stops.length > 0) {
         setSelectedTrainDetail(detail);
+
+        const liveData = liveRes?.data || {};
+        const passed = liveData.passed_stations || [];
+        const isArrived = Boolean(liveData.is_arrived || liveData.trainStatus === 'ARRIVED');
+        const liveCurrentStn = liveData.current_station_code || liveData.currentLocation?.stationCode;
+
+        setPassedStationsList(passed);
+        setIsTrainArrived(isArrived);
+
+        // Filter valid selectable stops (not already departed)
+        const validStops = detail.stops.filter(s => !passed.includes(s.station_code));
+        
         let targetStation = selectedStation;
-        const hasStation = detail.stops.some(s => s.station_code === selectedStation);
-        if (!hasStation) {
-          // Default to GHY if available, else first stop
-          const hasGhy = detail.stops.some(s => s.station_code === 'GHY');
-          targetStation = hasGhy ? 'GHY' : detail.stops[0].station_code;
-          setSelectedStation(targetStation);
+
+        if (isArrived) {
+          // If already at destination, target the destination stop
+          targetStation = detail.stops[detail.stops.length - 1].station_code;
+        } else if (liveCurrentStn && validStops.some(s => s.station_code === liveCurrentStn)) {
+          // Prefer current live observation station
+          targetStation = liveCurrentStn;
+        } else if (!validStops.some(s => s.station_code === selectedStation)) {
+          // Fallback to first remaining valid stop
+          targetStation = validStops.length > 0 ? validStops[0].station_code : detail.stops[0].station_code;
         }
+
+        setSelectedStation(targetStation);
+
         if (autoAnalyze) {
           onAnalyze(tNo, targetStation);
         }
@@ -100,13 +126,13 @@ export default function JourneyInputCard({
   function handleSelectSuggestion(train) {
     setTrainQuery(train.train_number);
     setShowDropdown(false);
-    loadTrainStops(train.train_number, true);
+    loadTrainStopsAndLive(train.train_number, true);
   }
 
   function handleExampleClick(example) {
     setTrainQuery(example.number);
     setSelectedStation(example.station);
-    loadTrainStops(example.number, false);
+    loadTrainStopsAndLive(example.number, false);
     onAnalyze(example.number, example.station);
   }
 
@@ -120,11 +146,23 @@ export default function JourneyInputCard({
     onAnalyze(trainQuery.trim(), selectedStation || 'GHY');
   }
 
+  // Filtered stops for dropdown (only valid remaining stops)
+  const availableStops = (selectedTrainDetail?.stops || []).filter(
+    s => !passedStationsList.includes(s.station_code)
+  );
+
   return (
     <div className="journey-input-card card">
       <div className="input-card-header">
-        <h3 className="input-card-title">Select Your Journey</h3>
-        <span className="input-card-subtitle">Choose train & observation station to calculate AI predictions</span>
+        <div>
+          <h3 className="input-card-title">Select Your Journey</h3>
+          <span className="input-card-subtitle">Live route & observation point for real-time delay forecasts</span>
+        </div>
+        {isTrainArrived && (
+          <span className="status-pill green">
+            ✓ Journey Completed · ARRIVED
+          </span>
+        )}
       </div>
 
       <form className="journey-search-form" onSubmit={handleSubmit}>
@@ -173,9 +211,11 @@ export default function JourneyInputCard({
           )}
         </div>
 
-        {/* Field 2: Observation Station */}
+        {/* Field 2: Observation Station (Passed stations strictly excluded) */}
         <div className="form-field-group">
-          <label className="field-label" htmlFor="station-select-input">Observation Station</label>
+          <label className="field-label" htmlFor="station-select-input">
+            Observation Station {passedStationsList.length > 0 && <span className="text-muted">({passedStationsList.length} passed stations hidden)</span>}
+          </label>
           <div className="field-input-box">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="field-icon">
               <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"></path>
@@ -186,9 +226,14 @@ export default function JourneyInputCard({
               className="field-select"
               value={selectedStation}
               onChange={(e) => handleStationSelect(e.target.value)}
+              disabled={isTrainArrived}
             >
-              {selectedTrainDetail?.stops && selectedTrainDetail.stops.length > 0 ? (
-                selectedTrainDetail.stops.map((s) => (
+              {isTrainArrived ? (
+                <option value={selectedStation}>
+                  {selectedTrainDetail?.destination_name || 'Terminus'} ({selectedStation}) · Arrived
+                </option>
+              ) : availableStops.length > 0 ? (
+                availableStops.map((s) => (
                   <option key={s.station_code} value={s.station_code}>
                     {s.station_name} ({s.station_code}) {s.departure_time ? `· Dep ${s.departure_time}` : ''}
                   </option>
@@ -196,10 +241,8 @@ export default function JourneyInputCard({
               ) : (
                 <>
                   <option value="GHY">Guwahati (GHY)</option>
-                  <option value="DBRG">Dibrugarh (DBRG)</option>
                   <option value="HWH">Howrah (HWH)</option>
                   <option value="NDLS">New Delhi (NDLS)</option>
-                  <option value="TBM">Tambaram (TBM)</option>
                 </>
               )}
             </select>
@@ -218,6 +261,10 @@ export default function JourneyInputCard({
               <>
                 <span className="spinner-mint"></span>
                 <span>Analysing...</span>
+              </>
+            ) : isTrainArrived ? (
+              <>
+                <span>✓ View Completed Journey</span>
               </>
             ) : (
               <>

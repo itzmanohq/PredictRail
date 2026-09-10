@@ -33,6 +33,9 @@ def test_railradar_live_fetch_and_cache():
     if not railradar_client.is_configured:
         pytest.skip("RAILRADAR_API_KEY not configured in .env")
 
+    # 0. Clear cache for test isolation
+    railradar_client.clear_cache()
+
     # 1. First fetch (Live API)
     res1 = service_get_live_train_status("12423", authoritative=False)
     assert res1["success"] is True

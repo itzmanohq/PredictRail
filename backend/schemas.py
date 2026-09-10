@@ -103,6 +103,9 @@ class ETAResponse(BaseModel):
     destination_dynamic_eta: str
     destination_predicted_delay_min: float
     destination_punctuality: str
+    is_arrived: Optional[bool] = Field(False, description="Whether train has arrived at destination")
+    train_status: Optional[str] = Field("RUNNING", description="RUNNING, ARRIVED, CANCELLED, DIVERTED")
+    arrival_time_remaining_min: Optional[float] = Field(0.0, description="Remaining minutes to destination (0 if arrived)")
     upcoming_stops_count: int
     upcoming_itinerary: List[Dict[str, Any]]
 
@@ -219,6 +222,14 @@ class CombinedPredictionRequest(BaseModel):
 
 class CombinedPredictionResponse(BaseModel):
     train: Dict[str, Any] = Field(..., description="Train metadata, route origin, and destination")
+    train_status: Optional[str] = Field("RUNNING", description="RUNNING, ARRIVED, CANCELLED, DIVERTED")
+    is_arrived: Optional[bool] = Field(False, description="Whether train has arrived at destination")
+    arrival_time_remaining_min: Optional[float] = Field(0.0, description="Remaining time to destination in minutes (0 if arrived)")
+    current_delay_minutes: Optional[float] = Field(0.0, description="Observed or live delay in minutes")
+    passed_stations: Optional[List[str]] = Field(default_factory=list, description="Stations already departed along route")
+    remaining_stations: Optional[List[str]] = Field(default_factory=list, description="Current and upcoming stations along route")
+    live_telemetry: Optional[Dict[str, Any]] = Field(default=None, description="Raw live telemetry snapshot from API")
+    last_updated: Optional[str] = Field(None, description="Time when prediction was last updated (HH:MM:SS)")
     delay_prediction: Dict[str, Any] = Field(..., description="Single-station ML delay prediction")
     dynamic_eta: Dict[str, Any] = Field(..., description="Dynamic ETA and multi-stop delay progression")
     weather: Dict[str, Any] = Field(..., description="Current weather conditions and meteorological risk")

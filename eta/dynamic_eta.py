@@ -198,9 +198,23 @@ def get_dynamic_eta(
             "status_color": status_color
         })
 
+    is_terminus = (cur_idx == len(stops) - 1)
+    is_arrived = is_terminus
+
     # Summary destination metrics
-    final_stop = upcoming_stations[-1]
+    final_stop = upcoming_stations[-1] if upcoming_stations else stops[-1]
     
+    if is_arrived:
+        dest_dynamic_eta = "Arrived (0 min remaining)"
+        dest_punctuality = "Arrived (On-Time)" if current_delay <= 15.0 else f"Arrived (+{int(round(current_delay))}m Delay)"
+        arrival_remaining_min = 0.0
+        upcoming_count = 0
+    else:
+        dest_dynamic_eta = final_stop.get("dynamic_eta_formatted", "--:--")
+        dest_punctuality = final_stop.get("punctuality_status", "On-Time")
+        arrival_remaining_min = max(0.0, float(final_stop.get("predicted_delay_min", 0.0)))
+        upcoming_count = max(0, len(upcoming_stations) - 1)
+
     return {
         "success": True,
         "train_number": t_no,
@@ -210,14 +224,17 @@ def get_dynamic_eta(
         "current_station": cur_stn,
         "current_station_name": stops[cur_idx]['Station_Name'],
         "current_delay_minutes": current_delay,
+        "is_arrived": is_arrived,
+        "train_status": "ARRIVED" if is_arrived else "RUNNING",
+        "arrival_time_remaining_min": arrival_remaining_min,
         "total_stops_on_route": total_stops,
-        "upcoming_stops_count": len(upcoming_stations) - 1,
-        "destination_name": final_stop["station_name"],
-        "destination_scheduled_time": final_stop["display_scheduled_time"],
-        "destination_scheduled_day": final_stop["scheduled_day"],
-        "destination_dynamic_eta": final_stop["dynamic_eta_formatted"],
-        "destination_predicted_delay_min": final_stop["predicted_delay_min"],
-        "destination_punctuality": final_stop["punctuality_status"],
+        "upcoming_stops_count": upcoming_count,
+        "destination_name": final_stop.get("station_name", stops[-1]['Station_Name']),
+        "destination_scheduled_time": final_stop.get("display_scheduled_time", stops[-1].get('Arrival time', '')),
+        "destination_scheduled_day": final_stop.get("scheduled_day", scheduled_days[-1]),
+        "destination_dynamic_eta": dest_dynamic_eta,
+        "destination_predicted_delay_min": final_stop.get("predicted_delay_min", current_delay) if not is_arrived else current_delay,
+        "destination_punctuality": dest_punctuality,
         "upcoming_itinerary": upcoming_stations
     }
 

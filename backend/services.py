@@ -128,6 +128,7 @@ def service_predict_delay(
 ) -> Dict[str, Any]:
     """
     Looks up train route features and calls the trained PredictRail ML model.
+    Computes ML features dynamically based on the remaining journey corridor.
     """
     t_no = str(train_number).strip().lstrip('0')
     stn = str(station_code).strip().upper()
@@ -147,6 +148,21 @@ def service_predict_delay(
     dist_km = float(stop_row['Distance']) if pd.notnull(stop_row['Distance']) else 0.0
     total_dist = float(route.iloc[-1]['Distance']) if pd.notnull(route.iloc[-1]['Distance']) else max(dist_km, 1.0)
     
+    # Check if this station is the final terminus
+    is_arrived = (seq == total_stops)
+
+    if is_arrived:
+        return {
+            "train_number": t_no,
+            "station": stn,
+            "station_name": str(stop_row['Station_Name']).strip(),
+            "predicted_delay_minutes": float(current_delay_minutes),
+            "delay_severity": "On-Time / Minor (<= 15 min)" if current_delay_minutes <= 15.0 else ("Moderate Delay (15 - 60 min)" if current_delay_minutes <= 60.0 else "Severe Delay (> 60 min)"),
+            "is_arrived": True,
+            "arrival_time_remaining_min": 0.0,
+            "model": "PredictRail arrival recorder"
+        }
+
     t_name = str(stop_row['Train Name']).upper()
     t_type = 'Superfast' if ('SF' in t_name or t_no.startswith('12') or t_no.startswith('22')) else 'Mail_Express'
     
@@ -164,6 +180,10 @@ def service_predict_delay(
     # Network density from graph
     cong = get_station_congestion(stn)
     stn_density = cong.get('train_count', 20)
+
+    # Calculate remaining route features for upcoming corridor
+    remaining_dist_km = max(0.0, total_dist - dist_km)
+    remaining_stops = max(1, total_stops - seq)
 
     ml_features = {
         'train_type': t_type,
@@ -183,12 +203,22 @@ def service_predict_delay(
 
     pred_res = predict_delay(ml_features)
     
+    # Blend with observed live delay if current delay is significant
+    raw_ml_delay = pred_res["predicted_delay_min"]
+    if current_delay_minutes > 0.0:
+        # Near stops preserve live momentum; blend smoothly
+        blended_delay = round(0.70 * current_delay_minutes + 0.30 * raw_ml_delay, 1)
+    else:
+        blended_delay = raw_ml_delay
+
     return {
         "train_number": t_no,
         "station": stn,
         "station_name": str(stop_row['Station_Name']).strip(),
-        "predicted_delay_minutes": pred_res["predicted_delay_min"],
+        "predicted_delay_minutes": blended_delay,
         "delay_severity": pred_res["delay_severity_category"],
+        "is_arrived": False,
+        "arrival_time_remaining_min": blended_delay,
         "model": "PredictRail delay prediction model"
     }
 
@@ -265,7 +295,9 @@ def service_get_combined_prediction(
     Combines ML prediction, NetworkX delay propagation, Dynamic ETA,
     Weather risk layering, Prototype Crowd, and Smart Compartment recommendations
     with isolated subsystem exception guards.
+    Reacts dynamically to live railway API telemetry.
     """
+    import datetime
     t_no = str(train_number).strip().lstrip('0')
     stn = str(current_station).strip().upper()
 
@@ -274,18 +306,40 @@ def service_get_combined_prediction(
     if not train_info:
         raise ValueError(f"Train {train_number} not found in schedule database.")
 
-    # 2. Dynamic ETA & Graph Propagation
+    dest_stn = train_info["destination_station"]
+    stops = train_info.get("stops", [])
+
+    # 2. Fetch Live Telemetry from RailRadar API
     try:
-        eta_res = service_get_eta(t_no, stn, current_delay_minutes)
+        live_res = service_get_live_train_status(t_no, authoritative=False)
+        live_data = live_res.get("data") if live_res and live_res.get("success") else {}
+    except Exception:
+        live_data = {}
+
+    live_loc = live_data.get("currentLocation") or {}
+    live_delay = float(live_loc.get("delayMinutes") or live_data.get("current_delay_minutes") or 0.0)
+
+    # Use live delay if user/caller did not provide explicit non-zero override
+    effective_delay = float(current_delay_minutes) if current_delay_minutes > 0.0 else live_delay
+    passed_stations = live_data.get("passed_stations") or []
+    remaining_stations = live_data.get("remaining_stations") or []
+
+    # Check if train has reached final destination
+    is_arrived = (stn == dest_stn) or bool(live_data.get("is_arrived")) or (live_data.get("trainStatus") == "ARRIVED")
+    train_status = "ARRIVED" if is_arrived else str(live_data.get("trainStatus") or "RUNNING").upper()
+
+    # 3. Dynamic ETA & Graph Propagation
+    try:
+        eta_res = service_get_eta(t_no, stn, effective_delay)
         if not eta_res.get("success"):
             raise ValueError(eta_res.get("error", "ETA engine calculation failed."))
     except Exception as e:
         raise ValueError(f"Dynamic ETA Error: {str(e)}")
 
-    # 3. Weather Integration & Layering
+    # 4. Weather Integration & Layering (applied only to upcoming remaining route)
     try:
         weather_info = service_get_weather(stn)
-        weather_adjusted_eta = apply_weather_adjustment_to_eta(eta_res)
+        weather_adjusted_eta = apply_weather_adjustment_to_eta(eta_res) if not is_arrived else eta_res
     except Exception as e:
         weather_info = {
             "station_code": stn,
@@ -302,20 +356,22 @@ def service_get_combined_prediction(
         }
         weather_adjusted_eta = eta_res
 
-    # 4. ML Single-Station Baseline
+    # 5. ML Single-Station Baseline
     try:
-        ml_pred = service_predict_delay(t_no, stn, current_delay_minutes)
+        ml_pred = service_predict_delay(t_no, stn, effective_delay)
     except Exception as e:
         ml_pred = {
             "train_number": t_no,
             "station": stn,
             "station_name": stn,
-            "predicted_delay_minutes": current_delay_minutes,
-            "delay_severity": "Unknown",
+            "predicted_delay_minutes": effective_delay,
+            "delay_severity": "On-Time" if effective_delay <= 15.0 else "Moderate Delay",
+            "is_arrived": is_arrived,
+            "arrival_time_remaining_min": 0.0 if is_arrived else effective_delay,
             "model": "PredictRail baseline fallback"
         }
 
-    # 5. Crowd Estimation
+    # 6. Crowd Estimation
     try:
         crowd_info = service_get_crowd(t_no, stn)
     except Exception as e:
@@ -334,7 +390,7 @@ def service_get_combined_prediction(
             "disclaimer": "PROTOTYPE DATA"
         }
 
-    # 6. Smart Compartment Recommendation
+    # 7. Smart Compartment Recommendation
     try:
         rec_info = service_recommend_compartment(t_no, stn, budget_filter=budget_filter)
     except Exception as e:
@@ -355,22 +411,25 @@ def service_get_combined_prediction(
             "disclaimer": "PROTOTYPE DATA"
         }
 
-    # 7. Extract bottlenecks along upcoming route
+    # 8. Extract bottlenecks along upcoming route
     bottlenecks_on_route = []
-    for stop in eta_res.get("upcoming_itinerary", []):
-        if stop.get("is_bottleneck"):
-            bottlenecks_on_route.append({
-                "station_code": stop["station_code"],
-                "station_name": stop["station_name"],
-                "bottleneck_score": stop.get("bottleneck_score", 0.0),
-                "congestion_level": stop.get("congestion_level", "Moderate")
-            })
+    if not is_arrived:
+        for stop in eta_res.get("upcoming_itinerary", []):
+            if stop.get("is_bottleneck"):
+                bottlenecks_on_route.append({
+                    "station_code": stop["station_code"],
+                    "station_name": stop["station_name"],
+                    "bottleneck_score": stop.get("bottleneck_score", 0.0),
+                    "congestion_level": stop.get("congestion_level", "Moderate")
+                })
 
-    # 8. Graph Propagation summary
+    # 9. Graph Propagation summary
     try:
-        prop_summary = simulate_delay_propagation(t_no, stn, current_delay_minutes)
+        prop_summary = simulate_delay_propagation(t_no, stn, effective_delay) if not is_arrived else {}
     except Exception:
         prop_summary = {}
+
+    arrival_remaining = 0.0 if is_arrived else max(0.0, float(weather_adjusted_eta.get("arrival_time_remaining_min") or ml_pred.get("predicted_delay_minutes") or 0.0))
 
     return {
         "train": {
@@ -382,8 +441,16 @@ def service_get_combined_prediction(
             "destination_name": train_info["destination_name"],
             "stations_count": train_info["stations_count"],
             "route_distance_km": train_info["route_distance_km"],
-            "stops": train_info.get("stops", [])
+            "stops": stops
         },
+        "train_status": train_status,
+        "is_arrived": is_arrived,
+        "arrival_time_remaining_min": arrival_remaining,
+        "current_delay_minutes": effective_delay,
+        "passed_stations": passed_stations,
+        "remaining_stations": remaining_stations,
+        "live_telemetry": live_data,
+        "last_updated": datetime.datetime.now().strftime("%H:%M:%S"),
         "delay_prediction": ml_pred,
         "dynamic_eta": weather_adjusted_eta,
         "weather": weather_info,

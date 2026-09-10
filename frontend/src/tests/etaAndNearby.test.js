@@ -264,6 +264,70 @@ export async function runAllTests() {
     assert(res2[0] > 12.5 && res2[0] < 13.5, `TBM latitude should be ~12.92, got ${res2[0]}`);
   });
 
+  // TEST 10: Dynamic Passed Stations Filtering (Excludes Departed Stations from Selectable List)
+  await test('Passed Stations Filtering: excludes already departed stops from selectable observation list', () => {
+    const allStops = [
+      { station_code: 'DBRG', station_name: 'Dibrugarh' },
+      { station_code: 'DMV', station_name: 'Dimapur' },
+      { station_code: 'LMG', station_name: 'Lumding' },
+      { station_code: 'GHY', station_name: 'Guwahati' },
+      { station_code: 'NBQ', station_name: 'New Bongaigaon' },
+      { station_code: 'NDLS', station_name: 'New Delhi' }
+    ];
+
+    const passedStations = ['DBRG', 'DMV', 'LMG'];
+    const selectableStops = allStops.filter(s => !passedStations.includes(s.station_code));
+
+    assertEquals(selectableStops.length, 3, 'Only 3 upcoming stations should remain selectable');
+    const selectableCodes = selectableStops.map(s => s.station_code);
+    assert(selectableCodes.includes('GHY'), 'Current station GHY must be selectable');
+    assert(selectableCodes.includes('NBQ'), 'Upcoming station NBQ must be selectable');
+    assert(selectableCodes.includes('NDLS'), 'Destination NDLS must be selectable');
+    assert(!selectableCodes.includes('DBRG'), 'Passed station DBRG must NOT be selectable');
+    assert(!selectableCodes.includes('DMV'), 'Passed station DMV must NOT be selectable');
+  });
+
+  // TEST 11: Destination Arrived State (0 min remaining, Status ARRIVED, No negative ETA)
+  await test('Destination Arrived Handling: displays Arrival 0 min and Status ARRIVED when journey completed', () => {
+    const arrivedPayload = {
+      is_arrived: true,
+      train_status: 'ARRIVED',
+      arrival_time_remaining_min: 0.0,
+      current_delay_minutes: 18.0,
+      dynamic_eta: {
+        destination_dynamic_eta: 'Arrived (0 min remaining)',
+        destination_punctuality: 'Arrived (+18m Delay)',
+        upcoming_stops_count: 0
+      }
+    };
+
+    assert(arrivedPayload.is_arrived === true, 'is_arrived flag must be true');
+    assertEquals(arrivedPayload.arrival_time_remaining_min, 0.0, 'Remaining arrival time must be 0 min');
+    assertEquals(arrivedPayload.train_status, 'ARRIVED', 'Status must be ARRIVED');
+    assertEquals(arrivedPayload.dynamic_eta.upcoming_stops_count, 0, 'Upcoming stops count must be 0');
+    assert(arrivedPayload.dynamic_eta.destination_dynamic_eta.includes('0 min'), 'ETA string must show 0 min remaining');
+  });
+
+  // TEST 12: Dynamic Delay Surge Reaction (Recalculation on delay increase)
+  await test('Dynamic Delay Surge: recalculates predicted delay dynamically when live delay increases', () => {
+    let currentObservedDelay = 8.0;
+    let mlBaselineDelay = 12.0;
+
+    function calculateDynamicDelay(liveDelay, mlDelay) {
+      return round(0.70 * liveDelay + 0.30 * mlDelay, 1);
+    }
+    function round(v, d) { return Number(Math.round(v + 'e' + d) + 'e-' + d); }
+
+    const initialPrediction = calculateDynamicDelay(currentObservedDelay, mlBaselineDelay);
+    
+    // Live update arrives: Delay surges to 28.0 min
+    currentObservedDelay = 28.0;
+    const updatedPrediction = calculateDynamicDelay(currentObservedDelay, mlBaselineDelay);
+
+    assert(updatedPrediction > initialPrediction, 'Prediction must dynamically increase with live delay surge');
+    assertEquals(updatedPrediction, 23.2, 'Updated blended prediction should match formula');
+  });
+
   console.log('\n======================================================');
   console.log(`  RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');

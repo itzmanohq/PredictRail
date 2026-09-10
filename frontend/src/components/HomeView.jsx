@@ -5,13 +5,18 @@ export default function HomeView({
   data,
   loading,
   error,
+  uiState,
+  lastUpdated,
   currentParams,
   onAnalyze,
-  onNavChange
+  onNavChange,
+  onRefresh
 }) {
   const train = data?.train;
+  const isArrived = Boolean(data?.is_arrived || data?.train_status === 'ARRIVED');
   const predictedDelay = data?.delay_prediction?.predicted_delay_minutes ?? 0;
-  const arrivalEta = data?.dynamic_eta?.destination_dynamic_eta || '--:--';
+  const currentDelay = data?.current_delay_minutes ?? predictedDelay;
+  const arrivalEta = isArrived ? 'Arrived (0 min)' : (data?.dynamic_eta?.destination_dynamic_eta || '--:--');
   const recData = data?.compartment_recommendation;
 
   return (
@@ -21,57 +26,38 @@ export default function HomeView({
         <div className="hero-text-content">
           <div className="hero-mini-pill">
             <span className="sparkle-icon">✨</span>
-            <span>AI-Powered Rail Assistant</span>
+            <span>AI-Powered Dynamic Rail Assistant</span>
           </div>
           <h1 className="hero-headline">
             Plan your journey<br />
             with confidence
           </h1>
           <p className="hero-tagline">
-            Accurate delay predictions, live geographic route maps, and smart coach guidance.
+            Real-time dynamic delay predictions, live geographic route maps, and smart coach guidance.
           </p>
         </div>
 
         {/* Clean Modern Flat SVG Train Graphic */}
         <div className="hero-graphic-box">
           <svg viewBox="0 0 320 180" className="hero-train-svg" aria-label="Modern Train Illustration">
-            {/* Soft background pastel hill */}
             <path d="M0 160 Q 80 120, 180 145 T 320 150 L 320 180 L 0 180 Z" fill="#ecfdf5" />
             <path d="M0 168 L 320 168" stroke="#d1fae5" strokeWidth="4" strokeDasharray="12 8" />
-            
-            {/* Speed tracks */}
             <line x1="20" y1="172" x2="300" y2="172" stroke="#10b981" strokeWidth="3" strokeLinecap="round" />
             
-            {/* Modern Train Body */}
             <g transform="translate(45, 60)">
-              {/* Shadow */}
               <rect x="10" y="96" width="210" height="10" rx="5" fill="#d1fae5" />
-              
-              {/* Train Locomotive / Lead Coach */}
               <path d="M 0 30 Q 0 15, 15 15 L 170 15 Q 215 15, 230 65 Q 235 85, 225 95 L 0 95 Z" fill="#ffffff" stroke="#10b981" strokeWidth="3.5" />
-              
-              {/* Mint Green Stripe */}
               <path d="M 0 65 L 230 65 Q 233 75, 228 80 L 0 80 Z" fill="#10b981" />
               <rect x="0" y="82" width="225" height="4" fill="#047857" />
-              
-              {/* Front Windshield Glass */}
               <path d="M 175 25 L 210 55 L 175 55 Z" fill="#06b6d4" opacity="0.85" />
-              
-              {/* Passenger Windows */}
               <rect x="20" y="32" width="30" height="22" rx="6" fill="#0f172a" />
               <rect x="60" y="32" width="30" height="22" rx="6" fill="#0f172a" />
               <rect x="100" y="32" width="30" height="22" rx="6" fill="#0f172a" />
               <rect x="140" y="32" width="24" height="22" rx="6" fill="#0f172a" />
-              
-              {/* Window glass highlights */}
               <line x1="26" y1="36" x2="44" y2="50" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" />
               <line x1="66" y1="36" x2="84" y2="50" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" />
               <line x1="106" y1="36" x2="124" y2="50" stroke="#06b6d4" strokeWidth="2" strokeLinecap="round" />
-
-              {/* Headlight */}
               <circle cx="225" cy="85" r="5" fill="#f59e0b" />
-              
-              {/* Wheels */}
               <circle cx="35" cy="100" r="10" fill="#334155" stroke="#ffffff" strokeWidth="2" />
               <circle cx="65" cy="100" r="10" fill="#334155" stroke="#ffffff" strokeWidth="2" />
               <circle cx="165" cy="100" r="10" fill="#334155" stroke="#ffffff" strokeWidth="2" />
@@ -87,13 +73,14 @@ export default function HomeView({
         loading={loading}
         currentTrainNumber={currentParams?.trainNumber}
         currentStationCode={currentParams?.stationCode}
+        liveStatus={data?.live_telemetry}
       />
 
       {/* Loading State Overlay */}
       {loading && !data && (
         <div className="card loading-card">
           <div className="spinner-mint large"></div>
-          <p className="loading-text">Calculating ML delay forecasts & railway graph progression...</p>
+          <p className="loading-text">Fetching real-time railway telemetry & computing dynamic ML forecasts...</p>
         </div>
       )}
 
@@ -103,7 +90,9 @@ export default function HomeView({
           {/* Main Trip Status Strip */}
           <div className="home-trip-banner card">
             <div className="trip-banner-left">
-              <span className="trip-badge">ANALYSED JOURNEY</span>
+              <span className="trip-badge">
+                {isArrived ? 'JOURNEY COMPLETED' : 'LIVE TRACKED JOURNEY'}
+              </span>
               <h3 className="trip-name">
                 <span className="trip-num-pill">{train.train_number}</span> {train.train_name}
               </h3>
@@ -113,7 +102,11 @@ export default function HomeView({
             </div>
 
             <div className="trip-banner-right">
-              {predictedDelay <= 10 ? (
+              {isArrived ? (
+                <div className="status-chip-hero green">
+                  <span>✓ STATUS: ARRIVED (0 MIN)</span>
+                </div>
+              ) : predictedDelay <= 10 ? (
                 <div className="status-chip-hero green">
                   <span className="dot-pulse"></span>
                   <span>RUNNING ON TIME</span>
@@ -123,7 +116,9 @@ export default function HomeView({
                   <span>⏱ +{Math.round(predictedDelay)} MIN DELAY</span>
                 </div>
               )}
-              <span className="telemetry-source-tag">Latest available data</span>
+              <span className="telemetry-source-tag">
+                {lastUpdated ? `Updated at ${lastUpdated}` : 'Live data active'}
+              </span>
             </div>
           </div>
 
@@ -133,11 +128,15 @@ export default function HomeView({
             <div className="quick-summary-card card" onClick={() => onNavChange('insights')}>
               <div className="quick-card-top">
                 <span className="quick-card-icon green">⏱</span>
-                <span className="quick-card-label">Arrival Forecast</span>
+                <span className="quick-card-label">
+                  {isArrived ? 'Journey Status' : 'Arrival Forecast'}
+                </span>
               </div>
               <div className="quick-main-stat text-blue">{arrivalEta}</div>
               <p className="quick-card-desc">
-                {predictedDelay <= 10 ? 'No major delay expected' : `+${Math.round(predictedDelay)}m late at destination`}
+                {isArrived
+                  ? `Terminus reached with ${currentDelay > 0 ? `+${Math.round(currentDelay)}m historical delay` : 'on-time record'}`
+                  : (predictedDelay <= 10 ? 'No major delay expected' : `+${Math.round(predictedDelay)}m late at destination`)}
               </p>
               <button type="button" className="quick-card-link">
                 View Journey Insights &rarr;
@@ -154,7 +153,7 @@ export default function HomeView({
                 {data.dynamic_eta?.current_station_name || currentParams.stationCode}
               </div>
               <p className="quick-card-desc">
-                Observed station · {train.stations_count || 20} corridor halts
+                {isArrived ? 'Destination station · Completed' : `Observed station · ${data.dynamic_eta?.upcoming_stops_count ?? (train.stations_count || 20)} halts remaining`}
               </p>
               <button type="button" className="quick-card-link">
                 View Geographic Map &rarr;

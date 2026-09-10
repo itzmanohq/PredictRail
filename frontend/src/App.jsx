@@ -11,6 +11,11 @@ export default function App() {
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [activeBudgetFilter, setActiveBudgetFilter] = useState('ALL');
+  
+  // UI State Machine: 'LOADING' | 'LIVE_DATA_FOUND' | 'PREDICTION_UPDATED' | 'LIVE_DATA_STALE' | 'ARRIVED' | 'DATA_UNAVAILABLE' | 'ERROR'
+  const [uiState, setUiState] = useState('LOADING');
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   // Navigation tab: 'home' | 'journey' | 'insights'
   const [activeNav, setActiveNav] = useState(() => {
@@ -67,12 +72,15 @@ export default function App() {
     handleAnalyze('12423', 'GHY');
   }, []);
 
-  const handleAnalyze = useCallback(async (trainNumber, stationCode) => {
+  const handleAnalyze = useCallback(async (trainNumber, stationCode, isBackgroundPoll = false) => {
     const isTrainSwitch = currentParamsRef.current.trainNumber !== trainNumber;
     const reqId = ++latestRequestIdRef.current;
 
-    setLoading(true);
-    setError(null);
+    if (!isBackgroundPoll) {
+      setLoading(true);
+      setUiState('LOADING');
+      setError(null);
+    }
 
     // If switching train, immediately clear old train's data
     if (isTrainSwitch) {
@@ -82,28 +90,60 @@ export default function App() {
     const updatedParams = {
       trainNumber,
       stationCode,
-      currentDelay: 0.0 // Internal delay obtained from backend
+      currentDelay: 0.0 // Internal delay resolved automatically
     };
     setCurrentParams(updatedParams);
     currentParamsRef.current = updatedParams;
 
     try {
-      // Analyze with internal delay
       const res = await analyzeTrain(trainNumber, stationCode, 0.0, activeBudgetFilter);
       if (reqId !== latestRequestIdRef.current) {
         return;
       }
       setData(res);
+      setLastUpdated(res.last_updated || new Date().toLocaleTimeString());
+
+      if (res.is_arrived || res.train_status === 'ARRIVED') {
+        setUiState('ARRIVED');
+      } else if (res.live_telemetry && res.live_telemetry.source) {
+        setUiState('PREDICTION_UPDATED');
+      } else {
+        setUiState('LIVE_DATA_FOUND');
+      }
     } catch (err) {
       if (reqId !== latestRequestIdRef.current) return;
       console.error("Analysis error:", err);
-      setError(err.message || "Failed to analyze train journey.");
+      if (data) {
+        // Keep last valid state and mark as stale
+        setUiState('LIVE_DATA_STALE');
+      } else {
+        setUiState('ERROR');
+        setError(err.message || "Failed to analyze train journey.");
+      }
     } finally {
-      if (reqId === latestRequestIdRef.current) {
+      if (reqId === latestRequestIdRef.current && !isBackgroundPoll) {
         setLoading(false);
       }
     }
-  }, [activeBudgetFilter]);
+  }, [activeBudgetFilter, data]);
+
+  // Periodic Auto-Polling for Live Railway Updates (every 35 seconds with tab visibility guard)
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+
+    const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (currentParamsRef.current.trainNumber && currentParamsRef.current.stationCode) {
+        handleAnalyze(
+          currentParamsRef.current.trainNumber,
+          currentParamsRef.current.stationCode,
+          true
+        );
+      }
+    }, 35000);
+
+    return () => clearInterval(pollInterval);
+  }, [autoRefreshEnabled, handleAnalyze]);
 
   // Real-time Dynamic ETA Recalculation on Live Telemetry Update
   const handleLiveTelemetryUpdate = useCallback(async (liveTelemetry, trainNum) => {
@@ -114,6 +154,25 @@ export default function App() {
     const liveLoc = liveTelemetry.currentLocation || {};
     const liveStation = liveLoc.stationCode || liveTelemetry.nextHalt?.stationCode;
     const liveDelay = liveLoc.delayMinutes ?? liveTelemetry.delayMinutes ?? 0.0;
+    const isArrived = Boolean(liveTelemetry.is_arrived || liveTelemetry.trainStatus === 'ARRIVED');
+
+    if (isArrived) {
+      setUiState('ARRIVED');
+      setData(prev => prev ? {
+        ...prev,
+        is_arrived: true,
+        train_status: 'ARRIVED',
+        arrival_time_remaining_min: 0.0,
+        dynamic_eta: {
+          ...prev.dynamic_eta,
+          is_arrived: true,
+          train_status: 'ARRIVED',
+          destination_dynamic_eta: 'Arrived (0 min remaining)',
+          arrival_time_remaining_min: 0.0
+        }
+      } : prev);
+      return;
+    }
 
     if (!liveStation) return;
 
@@ -134,7 +193,8 @@ export default function App() {
               predicted_delay_minutes: Number(liveDelay) || prev.delay_prediction?.predicted_delay_minutes || 0.0,
               current_delay_minutes: Number(liveDelay)
             },
-            dynamic_eta: etaRes
+            dynamic_eta: etaRes,
+            last_updated: new Date().toLocaleTimeString()
           };
         });
 
@@ -143,9 +203,13 @@ export default function App() {
           stationCode: liveStation,
           currentDelay: Number(liveDelay)
         }));
+
+        setUiState('PREDICTION_UPDATED');
+        setLastUpdated(new Date().toLocaleTimeString());
       }
     } catch (err) {
       console.warn("Live ETA recalculation background sync failed:", err);
+      setUiState('LIVE_DATA_STALE');
     }
   }, []);
 
@@ -169,6 +233,12 @@ export default function App() {
     }
   }
 
+  function handleManualRefresh() {
+    if (currentParams.trainNumber && currentParams.stationCode) {
+      handleAnalyze(currentParams.trainNumber, currentParams.stationCode, false);
+    }
+  }
+
   return (
     <div className="app-layout">
       {/* 1. Sidebar Navigation (Home, Journey, Journey Insights) */}
@@ -179,13 +249,28 @@ export default function App() {
 
       {/* 2. Main Application Flow */}
       <div className="app-main-viewport">
-        {/* Top Header Bar (No user avatar, No settings) */}
+        {/* Top Header Bar */}
         <Header
           activeNav={activeNav}
           onNavChange={handleNavChange}
+          uiState={uiState}
+          lastUpdated={lastUpdated}
+          onRefresh={handleManualRefresh}
         />
 
-        {/* Global Error Banner */}
+        {/* Global Stale Data or Error Notification */}
+        {uiState === 'LIVE_DATA_STALE' && (
+          <div className="stale-banner card">
+            <div className="stale-banner-content">
+              <span className="dot-stale"></span>
+              <span><strong>Notice:</strong> Live API update delayed. Showing latest available telemetry ({lastUpdated || 'recently'}).</span>
+            </div>
+            <button type="button" className="btn-stale-retry" onClick={handleManualRefresh}>
+              ↻ Retry Live Feed
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className="error-banner">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -206,9 +291,12 @@ export default function App() {
               data={data}
               loading={loading}
               error={error}
+              uiState={uiState}
+              lastUpdated={lastUpdated}
               currentParams={currentParams}
               onAnalyze={handleAnalyze}
               onNavChange={handleNavChange}
+              onRefresh={handleManualRefresh}
             />
           )}
 
@@ -216,8 +304,11 @@ export default function App() {
             <JourneyView
               data={data}
               loading={loading}
+              uiState={uiState}
+              lastUpdated={lastUpdated}
               currentParams={currentParams}
               onLiveTelemetryUpdate={handleLiveTelemetryUpdate}
+              onRefresh={handleManualRefresh}
             />
           )}
 
@@ -225,8 +316,11 @@ export default function App() {
             <JourneyInsightsView
               data={data}
               loading={loading}
+              uiState={uiState}
+              lastUpdated={lastUpdated}
               activeBudgetFilter={activeBudgetFilter}
               onBudgetFilterChange={handleBudgetFilterChange}
+              onRefresh={handleManualRefresh}
             />
           )}
         </main>

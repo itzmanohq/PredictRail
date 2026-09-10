@@ -10,6 +10,8 @@ export default function JourneyOverview({
   const stops = train.stops || [];
   const itinerary = data.dynamic_eta?.upcoming_itinerary || [];
   const currentStation = currentStationCode || data.dynamic_eta?.current_station || 'GHY';
+  const isArrived = Boolean(data.is_arrived || data.train_status === 'ARRIVED');
+  const delay = data.delay_prediction?.predicted_delay_minutes ?? data.current_delay_minutes ?? 0;
 
   // Extract key milestone stations (e.g. Origin, Current, Key Intermediates, Terminus)
   let milestoneStops = [];
@@ -19,50 +21,69 @@ export default function JourneyOverview({
     const dest = stops[stops.length - 1];
     const current = curIdx >= 0 ? stops[curIdx] : stops[0];
 
-    // Pick an upcoming milestone in between current and dest if available
-    let upcomingMilestone = null;
-    if (curIdx >= 0 && curIdx < stops.length - 2) {
-      const midIdx = Math.floor((curIdx + stops.length - 1) / 2);
-      upcomingMilestone = stops[midIdx];
-    } else if (stops.length > 2 && stops[1].station_code !== current.station_code) {
-      upcomingMilestone = stops[1];
-    }
-
-    milestoneStops = [
-      {
-        code: origin.station_code,
-        name: origin.station_name,
-        state: 'Departed',
-        time: origin.departure_time || origin.arrival_time,
-        badgeClass: 'departed'
-      },
-      {
-        code: current.station_code,
-        name: current.station_name,
-        state: 'Current',
-        time: current.departure_time || current.arrival_time,
-        badgeClass: 'current'
+    if (isArrived) {
+      milestoneStops = [
+        {
+          code: origin.station_code,
+          name: origin.station_name,
+          state: 'Departed',
+          time: origin.departure_time || origin.arrival_time,
+          badgeClass: 'departed'
+        },
+        {
+          code: dest.station_code,
+          name: dest.station_name,
+          state: 'Arrived',
+          time: dest.arrival_time || 'Completed',
+          badgeClass: 'destination'
+        }
+      ];
+    } else {
+      // Pick an upcoming milestone in between current and dest if available
+      let upcomingMilestone = null;
+      if (curIdx >= 0 && curIdx < stops.length - 2) {
+        const midIdx = Math.floor((curIdx + stops.length - 1) / 2);
+        upcomingMilestone = stops[midIdx];
+      } else if (stops.length > 2 && stops[1].station_code !== current.station_code) {
+        upcomingMilestone = stops[1];
       }
-    ];
 
-    if (upcomingMilestone && upcomingMilestone.station_code !== dest.station_code && upcomingMilestone.station_code !== current.station_code) {
-      milestoneStops.push({
-        code: upcomingMilestone.station_code,
-        name: upcomingMilestone.station_name,
-        state: 'Upcoming',
-        time: upcomingMilestone.arrival_time || upcomingMilestone.departure_time,
-        badgeClass: 'upcoming'
-      });
-    }
+      milestoneStops = [
+        {
+          code: origin.station_code,
+          name: origin.station_name,
+          state: 'Departed',
+          time: origin.departure_time || origin.arrival_time,
+          badgeClass: 'departed'
+        },
+        {
+          code: current.station_code,
+          name: current.station_name,
+          state: 'Current',
+          time: current.departure_time || current.arrival_time,
+          badgeClass: 'current'
+        }
+      ];
 
-    if (dest.station_code !== current.station_code) {
-      milestoneStops.push({
-        code: dest.station_code,
-        name: dest.station_name,
-        state: 'Destination',
-        time: data.dynamic_eta?.destination_dynamic_eta || dest.arrival_time,
-        badgeClass: 'destination'
-      });
+      if (upcomingMilestone && upcomingMilestone.station_code !== dest.station_code && upcomingMilestone.station_code !== current.station_code) {
+        milestoneStops.push({
+          code: upcomingMilestone.station_code,
+          name: upcomingMilestone.station_name,
+          state: 'Upcoming',
+          time: upcomingMilestone.arrival_time || upcomingMilestone.departure_time,
+          badgeClass: 'upcoming'
+        });
+      }
+
+      if (dest.station_code !== current.station_code) {
+        milestoneStops.push({
+          code: dest.station_code,
+          name: dest.station_name,
+          state: 'Destination',
+          time: data.dynamic_eta?.destination_dynamic_eta || dest.arrival_time,
+          badgeClass: 'destination'
+        });
+      }
     }
   } else {
     // Default demo journey display: Dibrugarh -> Guwahati -> Kolkata -> New Delhi
@@ -70,7 +91,7 @@ export default function JourneyOverview({
       { code: 'DBRG', name: 'Dibrugarh', state: 'Departed', time: '20:10', badgeClass: 'departed' },
       { code: 'GHY', name: 'Guwahati', state: 'Current', time: '05:35', badgeClass: 'current' },
       { code: 'HWH', name: 'Kolkata (Howrah)', state: 'Upcoming', time: '14:20', badgeClass: 'upcoming' },
-      { code: 'NDLS', name: 'New Delhi', state: 'Destination', time: '11:29 (Day 3)', badgeClass: 'destination' }
+      { code: 'NDLS', name: 'New Delhi', state: isArrived ? 'Arrived' : 'Destination', time: isArrived ? '0 min' : '11:29 (Day 3)', badgeClass: 'destination' }
     ];
   }
 
@@ -84,9 +105,13 @@ export default function JourneyOverview({
           </h3>
         </div>
         <div className="overview-status-badge">
-          {data.delay_prediction?.predicted_delay_minutes > 15 ? (
+          {isArrived ? (
+            <span className="status-pill green">
+              ✓ Status: ARRIVED (0 min)
+            </span>
+          ) : delay > 15 ? (
             <span className="status-pill amber">
-              +{Math.round(data.delay_prediction.predicted_delay_minutes)} min delay
+              +{Math.round(delay)} min delay
             </span>
           ) : (
             <span className="status-pill green">
@@ -106,19 +131,19 @@ export default function JourneyOverview({
                 {stop.badgeClass === 'current' && <span className="current-pulse-ring" />}
                 {stop.badgeClass === 'destination' && '★'}
               </div>
-              {idx < milestoneStops.length - 1 && <div className={`step-connector ${idx === 0 ? 'completed' : ''}`} />}
+              {idx < milestoneStops.length - 1 && <div className={`step-connector ${idx === 0 || isArrived ? 'completed' : ''}`} />}
             </div>
             <div className="step-content">
               <span className={`step-badge ${stop.badgeClass}`}>{stop.state}</span>
               <strong className="step-stn-name">{stop.name}</strong>
-              <span className="step-time">{stop.time ? `Scheduled: ${stop.time}` : stop.code}</span>
+              <span className="step-time">{stop.time ? (stop.time.includes(':') ? `Sched: ${stop.time}` : stop.time) : stop.code}</span>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Compact Upcoming Halts List */}
-      {itinerary.length > 0 && (
+      {/* Compact Upcoming Halts List (shown when not arrived) */}
+      {!isArrived && itinerary.length > 0 && (
         <div className="upcoming-halts-section">
           <h4 className="halts-section-title">Upcoming Halts ({itinerary.length} Stations Ahead)</h4>
           <div className="halts-grid">
