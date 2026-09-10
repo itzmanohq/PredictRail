@@ -381,7 +381,8 @@ def service_get_combined_prediction(
             "destination_station": train_info["destination_station"],
             "destination_name": train_info["destination_name"],
             "stations_count": train_info["stations_count"],
-            "route_distance_km": train_info["route_distance_km"]
+            "route_distance_km": train_info["route_distance_km"],
+            "stops": train_info.get("stops", [])
         },
         "delay_prediction": ml_pred,
         "dynamic_eta": weather_adjusted_eta,

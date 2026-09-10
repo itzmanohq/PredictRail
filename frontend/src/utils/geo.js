@@ -76,3 +76,20 @@ export function filterNearbyTrains(trains = [], centerLat, centerLon, radiusKm =
 
   return nearby.sort((a, b) => a.distance_km - b.distance_km);
 }
+
+/**
+ * Interpolates a geographic position between two GPS coordinates based on a ratio t (0.0 to 1.0).
+ * 
+ * @param {[number, number]} coord1 [lat1, lon1]
+ * @param {[number, number]} coord2 [lat2, lon2]
+ * @param {number} t Progress ratio between 0 and 1
+ * @returns {[number, number]} [lat, lon]
+ */
+export function interpolateCoordinates(coord1, coord2, t = 0.5) {
+  if (!coord1 || !coord2) return coord1 || coord2 || null;
+  const clampedT = Math.max(0, Math.min(1, t));
+  const lat = coord1[0] + (coord2[0] - coord1[0]) * clampedT;
+  const lon = coord1[1] + (coord2[1] - coord1[1]) * clampedT;
+  return [Number(lat.toFixed(6)), Number(lon.toFixed(6))];
+}
+

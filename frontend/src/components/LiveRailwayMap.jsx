@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getLiveTrainStatus } from '../services/api';
 import { filterNearbyTrains } from '../utils/geo';
+import { getStationCoordinates, resolveStopCoordinates } from '../utils/stationCoordinates';
 
 export default function LiveRailwayMap({
   trainNumber,
@@ -16,21 +17,18 @@ export default function LiveRailwayMap({
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layerGroupRef = useRef(null);
-  const liveMarkerRef = useRef(null);
+  const trainMarkerRef = useRef(null);
+  const currentStationMarkerRef = useRef(null);
 
   const [liveData, setLiveData] = useState(null);
   const [loadingLive, setLoadingLive] = useState(false);
   const [liveError, setLiveError] = useState(null);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
-  const [nearbyCount, setNearbyCount] = useState(0);
-  const [mapLayers, setMapLayers] = useState({
-    showStations: true,
-    showBottlenecks: true,
-    showNearby: true
-  });
+  const [showAllStations, setShowAllStations] = useState(true);
+  const [showBottlenecks, setShowBottlenecks] = useState(true);
 
-  // Fetch real-time live telemetry from RailRadar backend
+  // Fetch real-time live telemetry if backend/API is available
   const fetchLiveTelemetry = useCallback(async (isManual = false) => {
     if (!trainNumber) return;
     setLoadingLive(true);
@@ -44,46 +42,47 @@ export default function LiveRailwayMap({
           onLiveTelemetryUpdate(res.data, trainNumber);
         }
       } else {
-        setLiveError(res?.error || "Live train location is temporarily unavailable");
+        setLiveError(res?.error || "Real-time GPS is offline; showing estimated journey progress");
       }
     } catch (err) {
-      console.warn("RailRadar Live Telemetry error:", err);
-      setLiveError("Live train location is temporarily unavailable");
+      setLiveError("Real-time GPS telemetry unavailable; displaying calculated route progression");
     } finally {
       setLoadingLive(false);
     }
   }, [trainNumber, onLiveTelemetryUpdate]);
 
-  // Initial fetch and auto-polling (every 35s to protect API quota)
+  // Initial fetch and optional auto-polling
   useEffect(() => {
     fetchLiveTelemetry(false);
 
     if (!autoRefresh) return;
     const interval = setInterval(() => {
       fetchLiveTelemetry(false);
-    }, 35000);
+    }, 45000);
 
     return () => clearInterval(interval);
   }, [fetchLiveTelemetry, autoRefresh]);
 
-  // Initialize Leaflet Map
+  // Initialize Leaflet Map Instance
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
     if (!mapInstanceRef.current) {
-      // Create Leaflet map centered on central India
+      // Default center across India
       const map = L.map(mapContainerRef.current, {
-        center: [23.5, 82.5],
+        center: [23.5937, 82.9629],
         zoom: 5,
         zoomControl: false,
-        attributionControl: true
+        attributionControl: true,
+        scrollWheelZoom: true
       });
 
+      // Top-right Zoom Controls
       L.control.zoom({ position: 'topright' }).addTo(map);
 
-      // OpenStreetMap Tile Layer (100% Free, No API key)
+      // OpenStreetMap Real Geographic Tile Layer (100% Free, No Key Required)
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | RailRadar Live',
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors | PredictRail',
         maxZoom: 18,
         minZoom: 4
       }).addTo(map);
@@ -101,7 +100,53 @@ export default function LiveRailwayMap({
     };
   }, []);
 
-  // Update map layers, route polyline, live train marker, and stations
+  // Compute resolved stops list with real geographic coordinates
+  const processedStops = useMemo(() => {
+    const rawStops = trainInfo?.stops || [];
+    if (rawStops.length > 0) {
+      return rawStops.map((stop, idx) => {
+        const coords = resolveStopCoordinates(stop);
+        return {
+          ...stop,
+          sequence: stop.sequence ?? idx + 1,
+          station_code: String(stop.station_code || stop.stationCode || '').toUpperCase(),
+          station_name: stop.station_name || stop.stationName || stop.station_code,
+          lat: coords ? coords[0] : null,
+          lon: coords ? coords[1] : null
+        };
+      });
+    }
+
+    // Fallback for default demo journey if raw stops empty: Dibrugarh -> Guwahati -> Kolkata -> New Delhi
+    const demoCodes = ['DBRG', 'GHY', 'HWH', 'NDLS'];
+    return demoCodes.map((code, idx) => {
+      const coords = getStationCoordinates(code);
+      const names = {
+        'DBRG': 'Dibrugarh',
+        'GHY': 'Guwahati',
+        'HWH': 'Howrah Jn (Kolkata)',
+        'NDLS': 'New Delhi'
+      };
+      return {
+        sequence: idx + 1,
+        station_code: code,
+        station_name: names[code] || code,
+        lat: coords?.lat ?? null,
+        lon: coords?.lon ?? null,
+        distance_km: idx * 800
+      };
+    });
+  }, [trainInfo]);
+
+  // Determine current station index & station progress
+  const currentStationIdx = useMemo(() => {
+    if (!stationCode) return 0;
+    const cleanCode = String(stationCode).trim().toUpperCase();
+    const idx = processedStops.findIndex(s => s.station_code === cleanCode);
+    return idx >= 0 ? idx : 0;
+  }, [processedStops, stationCode]);
+
+  // Draw Leaflet Map Layers: Markers, Polylines, Progress & Train Location
   useEffect(() => {
     const map = mapInstanceRef.current;
     const layers = layerGroupRef.current;
@@ -109,54 +154,208 @@ export default function LiveRailwayMap({
 
     layers.clearLayers();
 
-    const stops = trainInfo?.stops || [];
-    const routeCoords = [];
+    const validStops = processedStops.filter(s => s.lat != null && s.lon != null);
+    if (validStops.length === 0) return;
+
     const bottleneckCodes = new Set(bottlenecks.map(b => String(b.station_code).toUpperCase()));
 
-    // 1. Plot Route Stations & Build Polyline
-    stops.forEach((stop, idx) => {
-      const lat = stop.latitude;
-      const lon = stop.longitude;
-      if (lat != null && lon != null) {
-        const pos = [lat, lon];
-        routeCoords.push(pos);
+    // 1. Separate coordinates into Completed Track vs Upcoming Track for mint/green styling
+    const passedCoords = [];
+    const upcomingCoords = [];
+    const fullRouteCoords = [];
 
-        const isOrigin = idx === 0;
-        const isDest = idx === stops.length - 1;
-        const isSelectedStation = stop.station_code === stationCode;
-        const isBottleneck = bottleneckCodes.has(stop.station_code);
+    validStops.forEach((stop, idx) => {
+      const pos = [stop.lat, stop.lon];
+      fullRouteCoords.push(pos);
+      if (idx <= currentStationIdx) {
+        passedCoords.push(pos);
+      }
+      if (idx >= currentStationIdx) {
+        upcomingCoords.push(pos);
+      }
+    });
 
-        // Marker for Origin / Destination / Selected observation station
-        if (isOrigin || isDest || isSelectedStation) {
-          const badgeClass = isOrigin ? 'origin-badge' : (isDest ? 'dest-badge' : 'selected-badge');
-          const badgeLabel = isOrigin ? 'ORIGIN' : (isDest ? 'DEST' : 'OBSERVED');
-          const markerIcon = L.divIcon({
-            className: 'custom-station-icon',
+    // 2. Draw Polyline Route Tracks (Mint/Green Design)
+    // A. Glow Underlay for entire route
+    if (fullRouteCoords.length > 1) {
+      const glowTrack = L.polyline(fullRouteCoords, {
+        color: '#10b981',
+        weight: 7,
+        opacity: 0.28,
+        lineCap: 'round',
+        lineJoin: 'round'
+      });
+      layers.addLayer(glowTrack);
+    }
+
+    // B. Completed route segment (Passed stations -> Current station)
+    if (passedCoords.length > 1) {
+      const completedTrack = L.polyline(passedCoords, {
+        color: '#059669', // Emerald completed track
+        weight: 4.5,
+        opacity: 0.95,
+        lineCap: 'round',
+        lineJoin: 'round'
+      });
+      layers.addLayer(completedTrack);
+    }
+
+    // C. Upcoming route segment (Current station -> Destination)
+    if (upcomingCoords.length > 1) {
+      const upcomingTrack = L.polyline(upcomingCoords, {
+        color: '#10b981', // Bright mint track
+        weight: 4,
+        opacity: 0.9,
+        dashArray: '8, 8',
+        lineCap: 'round',
+        lineJoin: 'round'
+      });
+      layers.addLayer(upcomingTrack);
+    }
+
+    // 3. Render Station Markers with Distinct States
+    validStops.forEach((stop, idx) => {
+      const pos = [stop.lat, stop.lon];
+      const isOrigin = idx === 0;
+      const isDest = idx === validStops.length - 1;
+      const isCurrent = idx === currentStationIdx;
+      const isPassed = idx < currentStationIdx;
+      const isUpcoming = idx > currentStationIdx && !isDest;
+      const isBottleneck = bottleneckCodes.has(stop.station_code);
+
+      // A. Origin Station Marker
+      if (isOrigin) {
+        const originIcon = L.divIcon({
+          className: 'custom-station-pin-icon',
+          html: `
+            <div class="station-map-pin origin">
+              <span class="pin-ring"></span>
+              <span class="pin-dot"></span>
+              <div class="pin-label">
+                <span class="stn-code">${stop.station_code}</span>
+                <span class="stn-badge origin">ORIGIN</span>
+              </div>
+            </div>
+          `,
+          iconSize: [90, 42],
+          iconAnchor: [45, 38]
+        });
+
+        const m = L.marker(pos, { icon: originIcon, zIndexOffset: 250 });
+        m.bindPopup(`
+          <div class="map-popup-card origin-popup">
+            <div class="popup-tag origin">JOURNEY ORIGIN</div>
+            <h4>${stop.station_name} (${stop.station_code})</h4>
+            <p><strong>Status:</strong> Route Starting Station</p>
+            ${stop.departure_time ? `<p><strong>Scheduled Departure:</strong> ${stop.departure_time}</p>` : ''}
+            <p><strong>Distance from start:</strong> 0 km</p>
+          </div>
+        `);
+        layers.addLayer(m);
+      }
+
+      // B. Destination / Terminus Station Marker
+      else if (isDest) {
+        const destIcon = L.divIcon({
+          className: 'custom-station-pin-icon',
+          html: `
+            <div class="station-map-pin destination">
+              <span class="pin-ring dest"></span>
+              <span class="pin-dot dest"></span>
+              <div class="pin-label dest">
+                <span class="stn-code">${stop.station_code}</span>
+                <span class="stn-badge dest">DESTINATION</span>
+              </div>
+            </div>
+          `,
+          iconSize: [110, 42],
+          iconAnchor: [55, 38]
+        });
+
+        const m = L.marker(pos, { icon: destIcon, zIndexOffset: 260 });
+        m.bindPopup(`
+          <div class="map-popup-card dest-popup">
+            <div class="popup-tag dest">JOURNEY TERMINUS</div>
+            <h4>${stop.station_name} (${stop.station_code})</h4>
+            <p><strong>Status:</strong> Final Destination</p>
+            ${stop.arrival_time ? `<p><strong>Scheduled Arrival:</strong> ${stop.arrival_time}</p>` : ''}
+            ${stop.distance_km ? `<p><strong>Total Route Distance:</strong> ${stop.distance_km} km</p>` : ''}
+          </div>
+        `);
+        layers.addLayer(m);
+      }
+
+      // C. Current Observation Station Marker (Pulsing Highlight)
+      else if (isCurrent) {
+        const currentIcon = L.divIcon({
+          className: 'custom-station-pin-icon',
+          html: `
+            <div class="station-map-pin current">
+              <span class="pin-pulse-wave"></span>
+              <span class="pin-pulse-dot"></span>
+              <div class="pin-label current">
+                <span class="stn-code">${stop.station_code}</span>
+                <span class="stn-badge current">CURRENT</span>
+              </div>
+            </div>
+          `,
+          iconSize: [100, 44],
+          iconAnchor: [50, 40]
+        });
+
+        const m = L.marker(pos, { icon: currentIcon, zIndexOffset: 400 });
+        m.bindPopup(`
+          <div class="map-popup-card current-popup">
+            <div class="popup-tag current">OBSERVED STATION</div>
+            <h4>${stop.station_name} (${stop.station_code})</h4>
+            <p><strong>Status:</strong> Current Selected Station</p>
+            ${stop.arrival_time ? `<p><strong>Arrival:</strong> ${stop.arrival_time}</p>` : ''}
+            ${stop.departure_time ? `<p><strong>Departure:</strong> ${stop.departure_time}</p>` : ''}
+            ${stop.distance_km ? `<p><strong>Distance:</strong> ${stop.distance_km} km</p>` : ''}
+          </div>
+        `);
+        layers.addLayer(m);
+        currentStationMarkerRef.current = m;
+      }
+
+      // D. Passed Stations (Completed Style)
+      else if (isPassed) {
+        if (showAllStations || isBottleneck) {
+          const passedIcon = L.divIcon({
+            className: 'custom-passed-node-icon',
             html: `
-              <div class="station-pin-marker ${badgeClass}">
-                <div class="station-pin-dot"></div>
-                <div class="station-pin-label">${stop.station_code} <span class="pin-tag">${badgeLabel}</span></div>
+              <div class="station-node-passed" title="Passed: ${stop.station_name} (${stop.station_code})">
+                <span class="node-check">✓</span>
+                <span class="node-hover-code">${stop.station_code}</span>
               </div>
             `,
-            iconSize: [80, 36],
-            iconAnchor: [40, 36]
+            iconSize: [18, 18],
+            iconAnchor: [9, 9]
           });
 
-          const m = L.marker(pos, { icon: markerIcon, zIndexOffset: 200 });
+          const m = L.marker(pos, { icon: passedIcon, zIndexOffset: 120 });
+          m.bindTooltip(`<strong>${stop.station_code}</strong>: ${stop.station_name} (Passed)`, {
+            direction: 'top',
+            offset: [0, -8],
+            className: 'station-tooltip-dark'
+          });
           m.bindPopup(`
-            <div class="map-popup-content">
+            <div class="map-popup-card passed-popup">
+              <div class="popup-tag passed">PASSED HALT</div>
               <h4>${stop.station_name} (${stop.station_code})</h4>
-              <p><strong>Status:</strong> ${badgeLabel}</p>
-              ${stop.arrival_time ? `<p><strong>Sch. Arrival:</strong> ${stop.arrival_time}</p>` : ''}
-              ${stop.departure_time ? `<p><strong>Sch. Departure:</strong> ${stop.departure_time}</p>` : ''}
-              <p><strong>Distance:</strong> ${stop.distance_km} km</p>
+              <p><strong>Status:</strong> Completed segment</p>
+              ${stop.departure_time ? `<p><strong>Sch. Dep:</strong> ${stop.departure_time}</p>` : ''}
             </div>
           `);
           layers.addLayer(m);
-        } else if (isBottleneck && mapLayers.showBottlenecks) {
-          // Busy Railway Junction Warning Marker
-          const bInfo = bottlenecks.find(b => b.station_code === stop.station_code);
-          const markerIcon = L.divIcon({
+        }
+      }
+
+      // E. Upcoming Stations & Bottleneck Junctions
+      else if (isUpcoming) {
+        if (isBottleneck && showBottlenecks) {
+          const bInfo = bottlenecks.find(b => String(b.station_code).toUpperCase() === stop.station_code);
+          const bottleneckIcon = L.divIcon({
             className: 'custom-bottleneck-icon',
             html: `
               <div class="bottleneck-node-marker">
@@ -165,75 +364,87 @@ export default function LiveRailwayMap({
                 <span class="hazard-label">${stop.station_code}</span>
               </div>
             `,
-            iconSize: [60, 30],
-            iconAnchor: [30, 15]
+            iconSize: [64, 30],
+            iconAnchor: [32, 15]
           });
-          const m = L.marker(pos, { icon: markerIcon, zIndexOffset: 250 });
+
+          const m = L.marker(pos, { icon: bottleneckIcon, zIndexOffset: 220 });
           m.bindPopup(`
-            <div class="map-popup-content bottleneck-popup">
-              <h4>⚠ Busy Railway Junction: ${stop.station_name} (${stop.station_code})</h4>
-              <p><strong>Traffic Level:</strong> ${bInfo?.congestion_level || 'Moderate'}</p>
+            <div class="map-popup-card bottleneck-popup">
+              <div class="popup-tag junction">⚠ BUSY JUNCTION</div>
+              <h4>${stop.station_name} (${stop.station_code})</h4>
+              <p><strong>Traffic Congestion:</strong> ${bInfo?.congestion_level || 'Moderate'}</p>
               <p><strong>Junction Delay Risk:</strong> ${bInfo?.bottleneck_score?.toFixed(1) || 'N/A'}/100</p>
             </div>
           `);
           layers.addLayer(m);
-        } else if (mapLayers.showStations) {
-          // Regular Intermediate Station Node
-          const markerIcon = L.divIcon({
-            className: 'custom-node-icon',
-            html: `<div class="station-dot" title="${stop.station_name} (${stop.station_code})"></div>`,
-            iconSize: [10, 10],
-            iconAnchor: [5, 5]
+        } else if (showAllStations) {
+          const upcomingIcon = L.divIcon({
+            className: 'custom-upcoming-node-icon',
+            html: `
+              <div class="station-node-upcoming" title="${stop.station_name} (${stop.station_code})">
+                <span class="node-dot"></span>
+                <span class="node-hover-code">${stop.station_code}</span>
+              </div>
+            `,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
           });
-          const m = L.marker(pos, { icon: markerIcon, zIndexOffset: 100 });
-          m.bindTooltip(`<strong>${stop.station_code}</strong>: ${stop.station_name}`, { direction: 'top', offset: [0, -5] });
+
+          const m = L.marker(pos, { icon: upcomingIcon, zIndexOffset: 150 });
+          m.bindTooltip(`<strong>${stop.station_code}</strong>: ${stop.station_name}`, {
+            direction: 'top',
+            offset: [0, -8],
+            className: 'station-tooltip-dark'
+          });
+          m.bindPopup(`
+            <div class="map-popup-card upcoming-popup">
+              <div class="popup-tag upcoming">UPCOMING HALT</div>
+              <h4>${stop.station_name} (${stop.station_code})</h4>
+              ${stop.arrival_time ? `<p><strong>Sch. Arrival:</strong> ${stop.arrival_time}</p>` : ''}
+              ${stop.departure_time ? `<p><strong>Sch. Departure:</strong> ${stop.departure_time}</p>` : ''}
+            </div>
+          `);
           layers.addLayer(m);
         }
       }
     });
 
-    // 2. Draw Railway Route Polyline
-    if (routeCoords.length > 1) {
-      // Glow underlay track
-      const glowTrack = L.polyline(routeCoords, {
-        color: 'var(--brand-red, #e11d48)',
-        weight: 6,
-        opacity: 0.35,
-        lineCap: 'round',
-        lineJoin: 'round'
-      });
-      layers.addLayer(glowTrack);
+    // 4. Render Current / Estimated Train Position Marker
+    let trainLat = null;
+    let trainLon = null;
+    let isLiveGPS = false;
+    let trainDelayMinutes = 0;
+    let locationDescription = '';
 
-      // Main high-visibility track line
-      const mainTrack = L.polyline(routeCoords, {
-        color: '#e11d48',
-        weight: 3.5,
-        opacity: 0.95,
-        dashArray: '8, 6',
-        lineCap: 'round',
-        lineJoin: 'round'
-      });
-      layers.addLayer(mainTrack);
+    const liveLoc = liveData?.data?.currentLocation;
+    if (liveLoc?.latitude != null && liveLoc?.longitude != null) {
+      trainLat = liveLoc.latitude;
+      trainLon = liveLoc.longitude;
+      isLiveGPS = Boolean(liveData?.data?.isLive);
+      trainDelayMinutes = liveLoc.delayMinutes ?? liveData?.data?.delayMinutes ?? 0;
+      locationDescription = liveLoc.stationName || liveLoc.stationCode || 'En route';
+    } else {
+      // Estimated / Demo Location based on current observation station
+      const currentStop = validStops[currentStationIdx] || validStops[0];
+      if (currentStop) {
+        trainLat = currentStop.lat;
+        trainLon = currentStop.lon;
+        trainDelayMinutes = trainInfo?.current_delay_minutes || 0;
+        locationDescription = `${currentStop.station_name} (${currentStop.station_code})`;
+      }
     }
 
-    // 3. Live Moving Train Position Marker from RailRadar
-    const loc = liveData?.data?.currentLocation;
-    const isLive = liveData?.data?.isLive ?? false;
-    const trainDelay = loc?.delayMinutes ?? liveData?.data?.delayMinutes ?? 0;
-    const liveLat = loc?.latitude;
-    const liveLon = loc?.longitude;
+    if (trainLat != null && trainLon != null) {
+      const statusLabel = isLiveGPS ? 'LIVE GPS' : 'ESTIMATED LOCATION';
+      const badgeClass = isLiveGPS ? 'live-gps' : 'estimated-loc';
 
-    if (liveLat != null && liveLon != null) {
-      const delayBadge = trainDelay > 15 
-        ? `<span class="train-delay-tag red">+${trainDelay}m</span>` 
-        : (trainDelay > 0 ? `<span class="train-delay-tag amber">+${trainDelay}m</span>` : `<span class="train-delay-tag green">ON TIME</span>`);
-
-      const liveTrainIcon = L.divIcon({
-        className: 'custom-live-train-icon',
+      const trainIcon = L.divIcon({
+        className: 'custom-train-marker-icon',
         html: `
-          <div class="live-train-marker-wrapper">
-            <div class="train-pulse-ring"></div>
-            <div class="train-live-badge">
+          <div class="train-marker-bubble ${badgeClass}">
+            <div class="train-pulse-ring ${badgeClass}"></div>
+            <div class="train-icon-body">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <rect width="16" height="16" x="4" y="3" rx="2"></rect>
                 <path d="M4 11h16"></path>
@@ -243,143 +454,91 @@ export default function LiveRailwayMap({
                 <circle cx="8" cy="15" r="1"></circle>
                 <circle cx="16" cy="15" r="1"></circle>
               </svg>
-              <span>${trainNumber}</span>
-              ${delayBadge}
+              <span class="train-num-text">${trainNumber || 'Express'}</span>
+              <span class="train-status-chip ${badgeClass}">${statusLabel}</span>
             </div>
           </div>
         `,
-        iconSize: [120, 48],
-        iconAnchor: [60, 24]
+        iconSize: [140, 48],
+        iconAnchor: [70, 24]
       });
 
-      const trainMarker = L.marker([liveLat, liveLon], { icon: liveTrainIcon, zIndexOffset: 500 });
+      const trainMarker = L.marker([trainLat, trainLon], { icon: trainIcon, zIndexOffset: 500 });
       trainMarker.bindPopup(`
-        <div class="map-popup-content live-popup">
-          <div class="live-popup-header">
-            <span class="live-indicator-dot"></span>
-            <strong>LIVE TRAIN POSITION</strong>
+        <div class="map-popup-card train-loc-popup">
+          <div class="popup-tag ${isLiveGPS ? 'live-gps' : 'estimated'}">
+            ${isLiveGPS ? '● LIVE GPS SATELLITE TELEMETRY' : '⏱ ESTIMATED DEMO POSITION'}
           </div>
-          <h4 style="margin: 0.3rem 0; color: #fff;">${liveData.data.trainName || `Train ${trainNumber}`}</h4>
-          <p><strong>Current Segment:</strong> ${loc.stationName || loc.stationCode || 'En route'}</p>
-          <p><strong>Running Delay:</strong> <span style="color: ${trainDelay > 15 ? 'var(--brand-red)' : '#10b981'}; font-weight: 700;">${trainDelay > 0 ? `+${trainDelay} minutes` : 'On Time'}</span></p>
-          <p><strong>Next Halt:</strong> ${liveData.data.nextHalt?.stationName || liveData.data.nextHalt?.stationCode || 'Upcoming'}</p>
-          ${loc.distanceFromOriginKm ? `<p><strong>Distance from Origin:</strong> ${loc.distanceFromOriginKm.toFixed(1)} km</p>` : ''}
-          <p style="font-size: 0.7rem; color: var(--text-muted); margin-top: 0.4rem;">Source: RailRadar Live GPS</p>
+          <h4>${trainInfo?.train_name || `Train ${trainNumber}`}</h4>
+          <p><strong>Position:</strong> ${locationDescription}</p>
+          <p><strong>Delay Status:</strong> <span style="color: ${trainDelayMinutes > 15 ? 'var(--brand-red)' : '#10b981'}; font-weight: 700;">${trainDelayMinutes > 0 ? `+${trainDelayMinutes} min` : 'On Time'}</span></p>
+          <p style="font-size: 0.72rem; color: var(--text-muted); margin-top: 0.45rem; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.35rem;">
+            ${isLiveGPS ? 'Source: Real-time Live RailRadar telemetry' : 'Calculated from selected observation station and journey progression'}
+          </p>
         </div>
       `);
       layers.addLayer(trainMarker);
-      liveMarkerRef.current = trainMarker;
+      trainMarkerRef.current = trainMarker;
     }
 
-    // 4. Plot Other Active Network Trains (Filtered by Distance Radius <= nearbyRadiusKm)
-    let centerLat = liveLat;
-    let centerLon = liveLon;
-
-    if (centerLat == null || centerLon == null) {
-      const currentStop = stops.find(s => s.station_code === stationCode);
-      if (currentStop && currentStop.latitude != null && currentStop.longitude != null) {
-        centerLat = currentStop.latitude;
-        centerLon = currentStop.longitude;
-      } else if (stops.length > 0 && stops[0].latitude != null && stops[0].longitude != null) {
-        centerLat = stops[0].latitude;
-        centerLon = stops[0].longitude;
-      }
+    // Auto-fit bounds on initial render or when train route changes
+    if (fullRouteCoords.length > 0) {
+      map.fitBounds(L.latLngBounds(fullRouteCoords), { padding: [45, 45], maxZoom: 10 });
     }
+  }, [processedStops, currentStationIdx, liveData, bottlenecks, showAllStations, showBottlenecks, trainNumber, trainInfo]);
 
-    const filteredNearby = (centerLat != null && centerLon != null && liveData?.nearby_trains)
-      ? filterNearbyTrains(liveData.nearby_trains, centerLat, centerLon, nearbyRadiusKm, trainNumber)
-      : [];
-
-    setNearbyCount(filteredNearby.length);
-
-    if (mapLayers.showNearby && filteredNearby.length > 0) {
-      filteredNearby.forEach((nTrain) => {
-        const nIcon = L.divIcon({
-          className: 'nearby-train-icon',
-          html: `
-            <div class="nearby-train-badge" title="${nTrain.train_name} (${nTrain.train_number}) — ${nTrain.distance_km} km away">
-              <span class="nearby-dot"></span>
-              <span>${nTrain.train_number}</span>
-            </div>
-          `,
-          iconSize: [60, 24],
-          iconAnchor: [30, 12]
-        });
-
-        const nMarker = L.marker([nTrain.latitude, nTrain.longitude], { icon: nIcon, zIndexOffset: 300 });
-        nMarker.bindPopup(`
-          <div class="map-popup-content">
-            <h4>${nTrain.train_name} (${nTrain.train_number})</h4>
-            <p><strong>Distance from selected train:</strong> ${nTrain.distance_km} km</p>
-            <p><strong>Near:</strong> ${nTrain.station_name || nTrain.station_code}</p>
-            <p><strong>Delay:</strong> ${nTrain.delay_minutes > 0 ? `+${nTrain.delay_minutes} min` : 'On Time'}</p>
-          </div>
-        `);
-        layers.addLayer(nMarker);
-      });
-    }
-
-    // Auto-fit map to route or live location on initial load / train switch
-    if (routeCoords.length > 0) {
-      map.fitBounds(L.latLngBounds(routeCoords), { padding: [40, 40], maxZoom: 10 });
-    }
-  }, [trainInfo, liveData, bottlenecks, stationCode, mapLayers, trainNumber, nearbyRadiusKm]);
-
-  // Center on live train
-  function handleCenterLiveTrain() {
-    const loc = liveData?.data?.currentLocation;
-    if (loc?.latitude != null && loc?.longitude != null && mapInstanceRef.current) {
-      mapInstanceRef.current.setView([loc.latitude, loc.longitude], 9, { animate: true });
-      if (liveMarkerRef.current) {
-        liveMarkerRef.current.openPopup();
-      }
+  // Center on current train / observation station
+  function handleCenterTrain() {
+    if (trainMarkerRef.current && mapInstanceRef.current) {
+      const latLng = trainMarkerRef.current.getLatLng();
+      mapInstanceRef.current.setView(latLng, 9, { animate: true });
+      trainMarkerRef.current.openPopup();
+    } else if (currentStationMarkerRef.current && mapInstanceRef.current) {
+      const latLng = currentStationMarkerRef.current.getLatLng();
+      mapInstanceRef.current.setView(latLng, 9, { animate: true });
+      currentStationMarkerRef.current.openPopup();
     }
   }
 
   // Fit entire railway route
   function handleFitRoute() {
-    const stops = trainInfo?.stops || [];
-    const valid = stops.filter(s => s.latitude != null && s.longitude != null);
+    const valid = processedStops.filter(s => s.lat != null && s.lon != null);
     if (valid.length > 0 && mapInstanceRef.current) {
-      const bounds = L.latLngBounds(valid.map(s => [s.latitude, s.longitude]));
-      mapInstanceRef.current.fitBounds(bounds, { padding: [40, 40] });
+      const bounds = L.latLngBounds(valid.map(s => [s.lat, s.lon]));
+      mapInstanceRef.current.fitBounds(bounds, { padding: [45, 45] });
     }
   }
 
-  const liveLoc = liveData?.data?.currentLocation;
-  const currentDelay = liveLoc?.delayMinutes ?? liveData?.data?.delayMinutes ?? null;
+  const currentStopObj = processedStops[currentStationIdx] || processedStops[0];
+  const originStop = processedStops[0];
+  const destStop = processedStops[processedStops.length - 1];
 
   return (
     <div className="card live-map-card">
       <div className="card-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
           <h3 className="card-title" style={{ margin: 0 }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon>
               <line x1="8" y1="2" x2="8" y2="18"></line>
               <line x1="16" y1="6" x2="16" y2="22"></line>
             </svg>
-            Where is my train? (Live Railway Map)
+            Journey Map
           </h3>
-          {liveData?.data?.isLive ? (
-            <span className="badge-status green live-gps-pill">
-              <span className="live-dot-pulse"></span> LIVE GPS
-            </span>
-          ) : (
-            <span className="badge-status orange">
-              SCHEDULED ROUTE
-            </span>
-          )}
+          <span className="badge-status green live-gps-pill">
+            <span className="live-dot-pulse"></span>
+            {liveData?.data?.isLive ? 'LIVE GPS ACTIVE' : 'REAL GEOGRAPHIC MAP'}
+          </span>
         </div>
 
         {/* Map Header Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn-map-control"
-            onClick={handleCenterLiveTrain}
-            disabled={!liveLoc?.latitude}
-            title="Pan to live train marker"
+            onClick={handleCenterTrain}
+            title="Pan to current train / observation station"
+            id="btn-locate-train"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10"></circle>
@@ -392,7 +551,8 @@ export default function LiveRailwayMap({
             type="button"
             className="btn-map-control"
             onClick={handleFitRoute}
-            title="Fit full route corridor"
+            title="Fit full journey corridor in view"
+            id="btn-fit-route"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M15 3h6v6"></path>
@@ -408,7 +568,8 @@ export default function LiveRailwayMap({
             className={`btn-map-control ${loadingLive ? 'rotating' : ''}`}
             onClick={() => fetchLiveTelemetry(true)}
             disabled={loadingLive}
-            title="Force refresh RailRadar telemetry"
+            title="Refresh train telemetry"
+            id="btn-refresh-map"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
@@ -418,95 +579,83 @@ export default function LiveRailwayMap({
         </div>
       </div>
 
-      {/* Live Status Bar Banner */}
+      {/* Corridor Telemetry Header Strip */}
       <div className="map-telemetry-banner">
         <div className="telemetry-col">
           <span className="telemetry-label">Train Service:</span>
-          <span className="telemetry-value highlight">{trainNumber} - {trainInfo?.train_name || 'Express'}</span>
+          <span className="telemetry-value highlight">{trainNumber || '12423'} - {trainInfo?.train_name || 'Rajdhani Express'}</span>
         </div>
 
         <div className="telemetry-col">
-          <span className="telemetry-label">Current Position:</span>
+          <span className="telemetry-label">Journey Corridor:</span>
           <span className="telemetry-value">
-            {liveLoc?.stationName ? `${liveLoc.stationName} (${liveLoc.stationCode})` : (liveError ? 'Live train location is temporarily unavailable' : 'En route')}
+            {originStop?.station_code || 'DBRG'} &rarr; {destStop?.station_code || 'NDLS'}
           </span>
         </div>
 
         <div className="telemetry-col">
-          <span className="telemetry-label">Live Delay:</span>
-          <span className={`telemetry-value ${currentDelay > 15 ? 'text-red' : (currentDelay > 0 ? 'text-amber' : 'text-green')}`}>
-            {currentDelay !== null ? (currentDelay > 0 ? `+${currentDelay} min delay` : 'On Time') : 'N/A'}
+          <span className="telemetry-label">Observed Station:</span>
+          <span className="telemetry-value text-green">
+            {currentStopObj?.station_name ? `${currentStopObj.station_name} (${currentStopObj.station_code})` : 'En route'}
           </span>
         </div>
 
         <div className="telemetry-col">
-          <span className="telemetry-label">Next Halt:</span>
+          <span className="telemetry-label">Position Mode:</span>
           <span className="telemetry-value">
-            {liveData?.data?.nextHalt?.stationName ? `${liveData.data.nextHalt.stationName} (${liveData.data.nextHalt.stationCode})` : 'Destination'}
+            {liveData?.data?.isLive ? 'Real-Time GPS' : 'Estimated Route Progress'}
           </span>
         </div>
       </div>
 
-      {/* Live Unavailable Notice if error / offline */}
-      {liveError && (
-        <div className="live-warning-strip">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-          <span><strong>Notice:</strong> Live train location is temporarily unavailable. Continuing to show scheduled route and busy junctions.</span>
-        </div>
-      )}
-
-      {/* Leaflet Map Canvas Container */}
+      {/* Geographic Leaflet Canvas */}
       <div className="leaflet-map-wrapper">
-        <div ref={mapContainerRef} className="leaflet-map-canvas" />
+        <div ref={mapContainerRef} className="leaflet-map-canvas" id="journey-leaflet-canvas" />
 
-        {/* Map Legend Overlay with Simple Plain-English Labels & Distance Radius */}
+        {/* Professional Legend Overlay */}
         <div className="map-legend-overlay">
           <div className="legend-item">
-            <span className="legend-color-line track"></span>
-            <span>Route Track</span>
+            <span className="legend-color-line passed"></span>
+            <span>Passed Track</span>
           </div>
           <div className="legend-item">
-            <span className="legend-icon-badge live"></span>
-            <span>Selected Train (GPS)</span>
+            <span className="legend-color-line upcoming"></span>
+            <span>Upcoming Track</span>
           </div>
           <div className="legend-item">
-            <span className="legend-icon-badge bottleneck"></span>
-            <span>Busy Railway Junction</span>
+            <span className="legend-dot current"></span>
+            <span>Observed Station</span>
           </div>
           <div className="legend-item">
-            <span className="legend-icon-badge nearby"></span>
-            <span>
-              {nearbyCount > 0 
-                ? `Other Live Trains (${nearbyCount} within ${nearbyRadiusKm} km)` 
-                : `No nearby live trains found within ${nearbyRadiusKm} km`}
-            </span>
+            <span className="legend-dot destination"></span>
+            <span>Terminus</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-dot bottleneck"></span>
+            <span>Busy Junction</span>
           </div>
         </div>
       </div>
 
-      {/* Map Footer Controls & Telemetry Footnote */}
+      {/* Map Layer Options & Source Footnote */}
       <div className="map-footer">
         <div className="map-layer-toggles">
           <label className="toggle-label">
             <input
               type="checkbox"
-              checked={mapLayers.showBottlenecks}
-              onChange={(e) => setMapLayers(prev => ({ ...prev, showBottlenecks: e.target.checked }))}
+              checked={showAllStations}
+              onChange={(e) => setShowAllStations(e.target.checked)}
             />
-            Busy Junctions
+            All Station Nodes
           </label>
 
           <label className="toggle-label">
             <input
               type="checkbox"
-              checked={mapLayers.showNearby}
-              onChange={(e) => setMapLayers(prev => ({ ...prev, showNearby: e.target.checked }))}
+              checked={showBottlenecks}
+              onChange={(e) => setShowBottlenecks(e.target.checked)}
             />
-            Nearby Trains ({nearbyRadiusKm} km)
+            Busy Junctions
           </label>
 
           <label className="toggle-label">
@@ -515,12 +664,12 @@ export default function LiveRailwayMap({
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
-            Auto-Refresh (35s)
+            Auto-Refresh (45s)
           </label>
         </div>
 
         <div className="map-footnote">
-          {lastRefreshedAt && `Updated: ${lastRefreshedAt.toLocaleTimeString()}`} | Powered by RailRadar & OpenStreetMap
+          {lastRefreshedAt && `Updated: ${lastRefreshedAt.toLocaleTimeString()} | `}Real Geographic Coordinates &bull; OpenStreetMap &copy;
         </div>
       </div>
     </div>

@@ -222,6 +222,48 @@ export async function runAllTests() {
     assertEquals(receivedDelay, 22, 'Live delay should be 22 min');
   });
 
+  // TEST 8: Real Geographic Coordinates Accuracy for Demo Journey
+  await test('Demo Journey Coordinates: accurate real-world coordinates for Dibrugarh -> Guwahati -> Kolkata -> New Delhi', async () => {
+    const { getStationCoordinates } = await import('../utils/stationCoordinates.js');
+    
+    const dbrg = getStationCoordinates('DBRG');
+    assert(dbrg != null, 'DBRG coordinates must exist');
+    assert(dbrg.lat > 27.0 && dbrg.lat < 28.0, `DBRG latitude should be ~27.46, got ${dbrg.lat}`);
+    assert(dbrg.lon > 94.0 && dbrg.lon < 96.0, `DBRG longitude should be ~94.94, got ${dbrg.lon}`);
+
+    const ghy = getStationCoordinates('GHY');
+    assert(ghy != null, 'GHY coordinates must exist');
+    assert(ghy.lat > 25.5 && ghy.lat < 27.0, `GHY latitude should be ~26.18, got ${ghy.lat}`);
+    assert(ghy.lon > 91.0 && ghy.lon < 92.5, `GHY longitude should be ~91.75, got ${ghy.lon}`);
+
+    const hwh = getStationCoordinates('HWH');
+    assert(hwh != null, 'HWH (Kolkata) coordinates must exist');
+    assert(hwh.lat > 22.0 && hwh.lat < 23.0, `HWH latitude should be ~22.58, got ${hwh.lat}`);
+    assert(hwh.lon > 88.0 && hwh.lon < 89.0, `HWH longitude should be ~88.34, got ${hwh.lon}`);
+
+    const ndls = getStationCoordinates('NDLS');
+    assert(ndls != null, 'NDLS (New Delhi) coordinates must exist');
+    assert(ndls.lat > 28.0 && ndls.lat < 29.0, `NDLS latitude should be ~28.64, got ${ndls.lat}`);
+    assert(ndls.lon > 76.5 && ndls.lon < 78.0, `NDLS longitude should be ~77.22, got ${ndls.lon}`);
+  });
+
+  // TEST 9: Station Coordinate Resolution Fallback
+  await test('Station Coordinate Resolution: resolves stop lat/lon or falls back seamlessly', async () => {
+    const { resolveStopCoordinates } = await import('../utils/stationCoordinates.js');
+
+    // Case 1: Stop already has valid coordinates
+    const explicitStop = { station_code: 'XYZ', latitude: 12.34, longitude: 56.78 };
+    const res1 = resolveStopCoordinates(explicitStop);
+    assertEquals(res1[0], 12.34, 'Should preserve valid explicit latitude');
+    assertEquals(res1[1], 56.78, 'Should preserve valid explicit longitude');
+
+    // Case 2: Stop has missing coordinates, resolved from station database
+    const missingCoordsStop = { station_code: 'TBM', station_name: 'Tambaram' };
+    const res2 = resolveStopCoordinates(missingCoordsStop);
+    assert(res2 != null, 'Should resolve TBM coordinates from database');
+    assert(res2[0] > 12.5 && res2[0] < 13.5, `TBM latitude should be ~12.92, got ${res2[0]}`);
+  });
+
   console.log('\n======================================================');
   console.log(`  RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log('======================================================\n');
@@ -230,3 +272,4 @@ export async function runAllTests() {
     process.exit(1);
   }
 }
+

@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import PassengerDashboard from './components/PassengerDashboard';
-import ClassicDashboard from './components/ClassicDashboard';
+import HomeView from './components/HomeView';
+import JourneyView from './components/JourneyView';
+import JourneyInsightsView from './components/JourneyInsightsView';
 import { analyzeTrain, getCompartmentRecommendation, getDynamicEta } from './services/api';
 
 export default function App() {
@@ -10,28 +12,27 @@ export default function App() {
   const [data, setData] = useState(null);
   const [activeBudgetFilter, setActiveBudgetFilter] = useState('ALL');
 
+  // Navigation tab: 'home' | 'journey' | 'insights'
+  const [activeNav, setActiveNav] = useState(() => {
+    if (typeof window !== 'undefined') {
+      if (window.location.hash === '#journey') return 'journey';
+      if (window.location.hash === '#insights') return 'insights';
+    }
+    return 'home';
+  });
+
   // Stale request guard token
   const latestRequestIdRef = useRef(0);
   const currentParamsRef = useRef({
-    trainNumber: '12637',
-    stationCode: 'TBM',
-    currentDelay: 15.0
-  });
-
-  // Determine initial view mode from URL hash or path
-  const [viewMode, setViewMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      if (window.location.hash === '#classic' || window.location.pathname === '/classic') {
-        return 'classic';
-      }
-    }
-    return 'passenger';
+    trainNumber: '12423',
+    stationCode: 'GHY',
+    currentDelay: 0.0
   });
 
   const [currentParams, setCurrentParams] = useState({
-    trainNumber: '12637',
-    stationCode: 'TBM',
-    currentDelay: 15.0
+    trainNumber: '12423',
+    stationCode: 'GHY',
+    currentDelay: 0.0
   });
 
   // Keep currentParamsRef in sync
@@ -39,55 +40,56 @@ export default function App() {
     currentParamsRef.current = currentParams;
   }, [currentParams]);
 
-  // Listen to hash change for #classic / #passenger routing
+  // Sync hash routing
   useEffect(() => {
     function handleHashChange() {
-      if (window.location.hash === '#classic' || window.location.pathname === '/classic') {
-        setViewMode('classic');
-      } else if (window.location.hash === '#passenger' || window.location.pathname === '/') {
-        setViewMode('passenger');
+      if (window.location.hash === '#journey') {
+        setActiveNav('journey');
+      } else if (window.location.hash === '#insights') {
+        setActiveNav('insights');
+      } else {
+        setActiveNav('home');
       }
     }
     window.addEventListener('hashchange', handleHashChange);
-    window.addEventListener('popstate', handleHashChange);
-    return () => {
-      window.removeEventListener('hashchange', handleHashChange);
-      window.removeEventListener('popstate', handleHashChange);
-    };
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
-  // Update URL hash when view mode changes
-  function handleViewModeChange(mode) {
-    setViewMode(mode);
+  function handleNavChange(navId) {
+    setActiveNav(navId);
     if (typeof window !== 'undefined') {
-      window.location.hash = mode === 'classic' ? '#classic' : '#passenger';
+      window.location.hash = navId === 'home' ? '' : `#${navId}`;
     }
   }
 
-  // Run initial analysis for Train 12637 Pandian Express at Tambaram
+  // Initial load for Train 12423 Rajdhani Express at Guwahati
   useEffect(() => {
-    handleAnalyze('12637', 'TBM', 15.0);
+    handleAnalyze('12423', 'GHY');
   }, []);
 
-  const handleAnalyze = useCallback(async (trainNumber, stationCode, delay) => {
+  const handleAnalyze = useCallback(async (trainNumber, stationCode) => {
     const isTrainSwitch = currentParamsRef.current.trainNumber !== trainNumber;
     const reqId = ++latestRequestIdRef.current;
 
     setLoading(true);
     setError(null);
 
-    // If switching train, immediately clear old train's data so stale ETA does not linger
+    // If switching train, immediately clear old train's data
     if (isTrainSwitch) {
       setData(null);
     }
 
-    const updatedParams = { trainNumber, stationCode, currentDelay: delay };
+    const updatedParams = {
+      trainNumber,
+      stationCode,
+      currentDelay: 0.0 // Internal delay obtained from backend
+    };
     setCurrentParams(updatedParams);
     currentParamsRef.current = updatedParams;
 
     try {
-      const res = await analyzeTrain(trainNumber, stationCode, delay, activeBudgetFilter);
-      // Stale response protection: discard if superseded by a newer request
+      // Analyze with internal delay
+      const res = await analyzeTrain(trainNumber, stationCode, 0.0, activeBudgetFilter);
       if (reqId !== latestRequestIdRef.current) {
         return;
       }
@@ -95,7 +97,7 @@ export default function App() {
     } catch (err) {
       if (reqId !== latestRequestIdRef.current) return;
       console.error("Analysis error:", err);
-      setError(err.message || "Failed to analyze train delay and route.");
+      setError(err.message || "Failed to analyze train journey.");
     } finally {
       if (reqId === latestRequestIdRef.current) {
         setLoading(false);
@@ -111,18 +113,14 @@ export default function App() {
 
     const liveLoc = liveTelemetry.currentLocation || {};
     const liveStation = liveLoc.stationCode || liveTelemetry.nextHalt?.stationCode;
-    const liveDelay = liveLoc.delayMinutes ?? liveTelemetry.delayMinutes ?? currentParamsRef.current.currentDelay ?? 0.0;
+    const liveDelay = liveLoc.delayMinutes ?? liveTelemetry.delayMinutes ?? 0.0;
 
     if (!liveStation) return;
 
     const reqId = ++latestRequestIdRef.current;
     try {
-      // Recalculate multi-stop Dynamic ETA and destination arrival time from latest live station and delay
       const etaRes = await getDynamicEta(trainNum, liveStation, Number(liveDelay) || 0.0);
-      
-      if (reqId !== latestRequestIdRef.current) {
-        return;
-      }
+      if (reqId !== latestRequestIdRef.current) return;
 
       if (etaRes && etaRes.success) {
         setData(prev => {
@@ -172,49 +170,67 @@ export default function App() {
   }
 
   return (
-    <div className="dashboard-container">
-      <Header
-        viewMode={viewMode}
-        onViewModeChange={handleViewModeChange}
+    <div className="app-layout">
+      {/* 1. Sidebar Navigation (Home, Journey, Journey Insights) */}
+      <Sidebar
+        activeNav={activeNav}
+        onNavChange={handleNavChange}
       />
 
-      {error && (
-        <div className="error-banner">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-          <div>
-            <strong>Analysis Warning:</strong> {error}
-          </div>
-        </div>
-      )}
+      {/* 2. Main Application Flow */}
+      <div className="app-main-viewport">
+        {/* Top Header Bar (No user avatar, No settings) */}
+        <Header
+          activeNav={activeNav}
+          onNavChange={handleNavChange}
+        />
 
-      {/* Render either Passenger View (Default) or Classic / Expert View */}
-      {viewMode === 'classic' ? (
-        <ClassicDashboard
-          data={data}
-          loading={loading}
-          error={error}
-          currentParams={currentParams}
-          activeBudgetFilter={activeBudgetFilter}
-          onAnalyze={handleAnalyze}
-          onBudgetFilterChange={handleBudgetFilterChange}
-          onLiveTelemetryUpdate={handleLiveTelemetryUpdate}
-        />
-      ) : (
-        <PassengerDashboard
-          data={data}
-          loading={loading}
-          error={error}
-          currentParams={currentParams}
-          activeBudgetFilter={activeBudgetFilter}
-          onAnalyze={handleAnalyze}
-          onBudgetFilterChange={handleBudgetFilterChange}
-          onLiveTelemetryUpdate={handleLiveTelemetryUpdate}
-        />
-      )}
+        {/* Global Error Banner */}
+        {error && (
+          <div className="error-banner">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <div>
+              <strong>Notice:</strong> {error}
+            </div>
+          </div>
+        )}
+
+        {/* View Switcher based on activeNav */}
+        <main className="content-container">
+          {activeNav === 'home' && (
+            <HomeView
+              data={data}
+              loading={loading}
+              error={error}
+              currentParams={currentParams}
+              onAnalyze={handleAnalyze}
+              onNavChange={handleNavChange}
+            />
+          )}
+
+          {activeNav === 'journey' && (
+            <JourneyView
+              data={data}
+              loading={loading}
+              currentParams={currentParams}
+              onLiveTelemetryUpdate={handleLiveTelemetryUpdate}
+            />
+          )}
+
+          {activeNav === 'insights' && (
+            <JourneyInsightsView
+              data={data}
+              loading={loading}
+              activeBudgetFilter={activeBudgetFilter}
+              onBudgetFilterChange={handleBudgetFilterChange}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }
